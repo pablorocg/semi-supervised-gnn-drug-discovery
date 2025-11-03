@@ -34,14 +34,13 @@ class BaseModule(L.LightningModule):
         weight_decay: float = 3e-5,
         nesterov: bool = True,
         momentum: float = 0.99,
-        # RE-ADDED: Transforms to be applied on-the-fly
         train_transforms: Optional[Callable] = None,
         val_transforms: Optional[Callable] = None,
         test_transforms: Optional[Callable] = None,
     ):
         super().__init__()
         self.learning_rate = learning_rate
-        self.loss_fn = None  # Will be defined in the child class
+        self.loss_fn = None
         self.warmup_epochs = warmup_epochs
         self.cosine_period_ratio = cosine_period_ratio
         self.optimizer = optimizer
@@ -50,7 +49,6 @@ class BaseModule(L.LightningModule):
         self.momentum = momentum
         assert 0 < cosine_period_ratio <= 1
 
-        # RE-ADDED: Save on-the-fly transforms
         self.train_transforms = train_transforms
         self.val_transforms = val_transforms
         self.test_transforms = test_transforms
@@ -198,8 +196,6 @@ class BaseModule(L.LightningModule):
             self.trainer.testing or self.trainer.predicting
         ) and self.test_transforms is not None:
             batch = self.test_transforms(batch)
-
-        # CRITICAL FIX: Return the modified batch
         return batch
 
     def on_train_epoch_end(self):
