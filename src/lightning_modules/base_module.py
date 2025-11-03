@@ -7,13 +7,9 @@ import torch
 import torch.nn as nn
 from torch.optim import SGD, AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
-from torchmetrics import (
-    AUROC,
-    Accuracy,
-    AveragePrecision,
-    F1Score,
-    MetricCollection,
-)
+from torchmetrics import MetricCollection
+
+from src.utils.metrics import MultiTaskAP, MultiTaskRMSE, MultiTaskROCAUC
 
 # Set up logging
 log = logging.getLogger(__name__)
@@ -63,8 +59,9 @@ class BaseModule(L.LightningModule):
         self.model = model
 
         if weights is not None:
-            log.info(f"Loading weights from {weights}")
-            self.load_weights(weights)
+            # log.info(f"Loading weights from {weights}")
+            # self.load_weights(weights)
+            print("Loading weights is not implemented yet.")
 
         self.model = (
             torch.compile(model, mode=compile_mode)
@@ -149,36 +146,12 @@ class BaseModule(L.LightningModule):
         return [optimizer], [scheduler_config]
 
     def configure_metrics(self, prefix: str):
-        task = "multilabel"
-        avg_strategy = "macro"
-
         return MetricCollection(
             {
-                f"{prefix}/AUROC_macro": AUROC(
-                    task=task,
-                    num_labels=self.num_classes,
-                    average=avg_strategy,
-                    validate_args=True,
-                ),
-                f"{prefix}/AUPRC_macro": AveragePrecision(
-                    task=task,
-                    num_labels=self.num_classes,
-                    average=avg_strategy,
-                    validate_args=True,
-                ),
-                f"{prefix}/F1_macro": F1Score(
-                    task=task,
-                    num_labels=self.num_classes,
-                    average=avg_strategy,
-                    validate_args=True,
-                ),
-                f"{prefix}/Accuracy_macro": Accuracy(
-                    task=task,
-                    num_labels=self.num_classes,
-                    average=avg_strategy,
-                    validate_args=True,
-                ),
-            },
+                f"{prefix}/rocauc": MultiTaskROCAUC(),
+                f"{prefix}/ap": MultiTaskAP(),
+                f"{prefix}/rmse": MultiTaskRMSE(),
+            }
         )
 
     def on_after_batch_transfer(self, batch, dataloader_idx):
@@ -214,119 +187,10 @@ class BaseModule(L.LightningModule):
             )
             self.val_metrics.reset()
 
-    def load_weights(self, weights):
-        # ckpt = torch.load(weights, map_location="cpu", weights_only=False)
-        # print(
-        #     f"Loading weights trained for {ckpt['global_step']} steps / {ckpt['epoch']} epochs."
-        # )
-        # self.load_state_dict(ckpt["state_dict"], strict=False)
-        pass
-
-    def load_state_dict(self, state_dict, load_decoder=True, *args, **kwargs):
-        # old_params = copy.deepcopy(self.state_dict())
-
-        # target_compiled = "_orig" in next(iter(old_params.keys()))
-        # source_compiled = "_orig" in next(iter(state_dict.keys()))
-
-        # print(f"Target compiled: {target_compiled}, source compiled: {source_compiled}")
-
-        # if not target_compiled and source_compiled:
-        #     print(
-        #         "Source state_dict is compiled, but target model is not. Removing _orig suffix from state_dict keys."
-        #     )
-        #     state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
-
-        # # Repeat stem weights when state_dict num_channels is smaller than new_state_dict num_channels
-        # if self.model.stem_weight_name is not None:
-        #     stem_name = f"model.{self.model.stem_weight_name}"
-        #     pt_input_channels = state_dict[stem_name].shape[
-        #         1
-        #     ]  # (N, C, H, W, Z) where N is num tokens.
-        #     ft_input_channels = old_params[stem_name].shape[1]
-        #     if pt_input_channels < ft_input_channels:
-        #         assert pt_input_channels == 1, (
-        #             "Stem weights can only be repeated if the input channels in the state_dict is 1."
-        #         )
-        #         print(
-        #             f"Repeating stem weights from {pt_input_channels} to {ft_input_channels} channels for {stem_name}."
-        #         )
-        #         state_dict[stem_name] = (
-        #             state_dict[stem_name].repeat(1, ft_input_channels, 1, 1, 1)
-        #             / ft_input_channels
-        #         )
-
-        # # Filter out keys that are not in the old state dict or have different shapes
-        # def should_load_key(key, state_dict, old_params, load_decoder):
-        #     # reject all decoder keys regardless of their shape
-        #     if not load_decoder and key.startswith("model.decoder"):
-        #         return True
-        #     # accept all keys that are in the old state dict and have the same shape
-        #     return (key in old_params) and (
-        #         old_params[key].shape == state_dict[key].shape
-        #     )
-
-        # # Filter state_dict to only include keys that should be loaded
-        # state_dict = {
-        #     k: v
-        #     for k, v in state_dict.items()
-        #     if should_load_key(k, state_dict, old_params, load_decoder)
-        # }
-
-        # # Lists used to inform master of our whereabouts
-        # rejected_keys_new = [k for k in state_dict.keys() if k not in old_params]
-        # state_dict = {k: v for k, v in state_dict.items() if k in old_params}
-        # rejected_keys_shape = [
-        #     k for k in state_dict.keys() if old_params[k].shape != state_dict[k].shape
-        # ]
-        # rejected_keys_decoder = [
-        #     k
-        #     for k in state_dict.keys()
-        #     if not load_decoder and k.startswith("model.decoder")
-        # ]
-
-        # # Load the state dict
-        # kwargs["strict"] = False
-        # super().load_state_dict(state_dict, *args, **kwargs)
-
-        # # Check if weights were actually loaded
-        # new_params = self.state_dict()
-        # rejected_keys_data = []
-
-        # successful = 0
-        # unsuccessful = 0
-        # for param_name, p1, p2 in zip(
-        #     old_params.keys(), old_params.values(), new_params.values()
-        # ):
-        #     if p1.data.ne(p2.data).sum() > 0:
-        #         successful += 1
-        #     else:
-        #         unsuccessful += 1
-        #         if (
-        #             param_name not in rejected_keys_new
-        #             and param_name not in rejected_keys_shape
-        #         ):
-        #             rejected_keys_data.append(param_name)
-
-        # print(
-        #     f"Succesfully transferred weights for {successful}/{successful + unsuccessful} layers"
-        # )
-        # print(
-        #     f"Rejected the following keys:\n"
-        #     f"Not in old dict: {rejected_keys_new}.\n"
-        #     f"Wrong shape: {rejected_keys_shape}.\n"
-        #     f"Post check not succesful: {rejected_keys_data}."
-        # )
-        # if not load_decoder:
-        #     print(
-        #         "Decoder weights were not loaded, as requested. If you want to load them, set `load_decoder=True`."
-        #     )
-        #     print(f"Rejected decoder keys: {rejected_keys_decoder}.")
-        # else:
-        #     print(
-        #         "Warning! Also loaded the decoder. If you are finetuning, this might not be what you want."
-        #     )
-
-        # assert successful > 0, (
-        #     "No weights were loaded. Check the state_dict and the model architecture."
-        # )
-        pass
+    def on_test_epoch_end(self):
+        if self.test_metrics:
+            metrics = self.test_metrics.compute()
+            self.log_dict(
+                metrics, on_step=False, on_epoch=True, sync_dist=True, prog_bar=True
+            )
+            self.test_metrics.reset()
