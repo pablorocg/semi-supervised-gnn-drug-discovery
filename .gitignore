@@ -144,7 +144,7 @@ dmypy.json
 .pypirc
 
 # Project-specific
-data/
+
 checkpoints/
 logs/
 *.png
