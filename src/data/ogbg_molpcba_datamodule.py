@@ -23,7 +23,7 @@ SUPPORTED_DATASETS = {
 }
 
 
-class OgbgMolpcbaDataModule(LightningDataModule):
+class OGBGDataModule(LightningDataModule):
     """ """
 
     def __init__(
@@ -127,7 +127,7 @@ class OgbgMolpcbaDataModule(LightningDataModule):
         return self.dataset.num_tasks
 
 if __name__ == "__main__":
-    dm = OgbgMolpcbaDataModule()
+    dm = OGBGDataModule()
     dm.setup("fit")
     train_loader = dm.train_dataloader()
     for batch in train_loader:

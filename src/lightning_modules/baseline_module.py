@@ -8,11 +8,11 @@ class BaselineGNNModule(BaseModule):
         super().__init__(*args, **kwargs)
         self.loss_fn = torch.nn.BCEWithLogitsLoss()
     
-    def forward(self, x, edge_index, batch):
-        return self.model(x, edge_index, batch)
+    def forward(self, batch):
+        return self.model(batch)
     
     def training_step(self, batch, batch_idx):
-        logits = self(batch.x, batch.edge_index, batch.batch)
+        logits = self(batch)
         
         # Filtra NaN targets
         mask = ~torch.isnan(batch.y)
@@ -33,7 +33,7 @@ class BaselineGNNModule(BaseModule):
         return loss
     
     def validation_step(self, batch, batch_idx):
-        logits = self(batch.x, batch.edge_index, batch.batch)
+        logits = self(batch)
         
         # Filtra NaN
         mask = ~torch.isnan(batch.y)
@@ -53,7 +53,7 @@ class BaselineGNNModule(BaseModule):
         return loss
     
     def test_step(self, batch, batch_idx):
-        logits = self(batch.x, batch.edge_index, batch.batch)
+        logits = self(batch)
         
         preds = torch.sigmoid(logits)
         self.test_metrics.update(preds, batch.y)

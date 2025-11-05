@@ -12,37 +12,104 @@ from src.utils.transforms import ToFloatTransform
 import logging
 import torch 
 from pytorch_lightning.loggers import TensorBoardLogger
-
+import torch
+import torch.nn as nn
+from torch_geometric.nn import GINConv, global_add_pool
+from ogb.graphproppred.mol_encoder import AtomEncoder, BondEncoder # Importante
 
 log = logging.getLogger(__name__)
 
 
 graph_transforms = Compose(
     [
-        ToFloatTransform(),
+        # ToFloatTransform(),
         AddSelfLoops(),
-        NormalizeFeatures(),
+        # NormalizeFeatures(),
+   
     ]
 )
 
 
-class GCN2(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels, num_layers):
-        super().__init__()
-        self.model = GCN(
-            in_channels=in_channels,
-            hidden_channels=hidden_channels,
-            num_layers=num_layers,
-            out_channels=out_channels,
-            dropout=0.2,
-            add_self_loops=False
-        )
+# class GCN2(torch.nn.Module):
+#     def __init__(self, in_channels, hidden_channels, out_channels, num_layers):
+#         super().__init__()
+#         self.model = GCN(
+#             in_channels=in_channels,
+#             hidden_channels=hidden_channels,
+#             num_layers=num_layers,
+#             out_channels=out_channels,
+#             dropout=0.2,
+#             add_self_loops=False
+#         )
     
-    def forward(self, x, edge_index, batch):
-        x = self.model(x, edge_index)
-        x = global_mean_pool(x, batch)
-        return x
+#     def forward(self, x, edge_index, batch):
+#         x = self.model(x, edge_index)
+#         x = global_mean_pool(x, batch)
+#         return x
 
+
+class GNN_MolPCBA(nn.Module):
+    def __init__(self, num_layers, hidden_dim, out_dim):
+        super(GNN_MolPCBA, self).__init__()
+        self.num_layers = num_layers
+        self.hidden_dim = hidden_dim
+        
+        # 1. Encoders para las características de los nodos y aristas (Átomos y Enlaces)
+        self.atom_encoder = AtomEncoder(hidden_dim)
+        # El dataset ogbg-molpcba utiliza 9 características de átomo
+        # y 3 características de enlace por defecto.
+
+        # 2. Capas GIN
+        self.convs = nn.ModuleList()
+        self.batch_norms = nn.ModuleList()
+        
+        for i in range(num_layers):
+            # MLPs para GIN
+            mlp = nn.Sequential(
+                nn.Linear(hidden_dim, 2 * hidden_dim),
+                nn.BatchNorm1d(2 * hidden_dim),
+                nn.ReLU(),
+                nn.Linear(2 * hidden_dim, hidden_dim)
+            )
+            conv = GINConv(mlp, train_eps=True)
+            self.convs.append(conv)
+            self.batch_norms.append(nn.BatchNorm1d(hidden_dim))
+
+        # 3. Capa de Salida para clasificación multiclase
+        # El 'out_dim' es el número de tareas (128 para ogbg-molpcba)
+        self.pool = global_add_pool
+        self.final_linear = nn.Linear(hidden_dim, out_dim)
+
+
+    def forward(self, data):
+        # x: características del átomo, edge_index: conectividad, edge_attr: características del enlace
+        x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
+        
+        # Codificar características iniciales de los nodos
+        x = self.atom_encoder(x)
+        
+        # Propagación del mensaje (Capas GNN)
+        h_list = [x]
+        for i in range(self.num_layers):
+            h = self.convs[i](h_list[i], edge_index)
+            h = self.batch_norms[i](h)
+            h = nn.functional.relu(h)
+            
+            # Skip connection (como el de GIN original)
+            h = h + h_list[i]
+            
+            h_list.append(h)
+
+        # Agregar todas las representaciones de capa para obtener la representación final del nodo
+        x = sum(h_list)
+
+        # Global Pooling (se recomienda global_add_pool o global_mean_pool)
+        h_graph = self.pool(x, batch)
+
+        # Capa de clasificación
+        out = self.final_linear(h_graph)
+        
+        return out
 
 
 data_module = OgbgMolpcbaDataModule(
@@ -56,7 +123,7 @@ data_module.setup(stage="fit")
 
 # 3. Setup Lightning Module
 module = BaselineGNNModule(
-    model=GCN2(data_module.num_node_features, 128, data_module.num_classes, 3),
+    model=GNN_MolPCBA(num_layers=5, hidden_dim=300, out_dim=128),
     num_classes=data_module.num_classes,
     learning_rate=1e-3,
     warmup_epochs=1,
