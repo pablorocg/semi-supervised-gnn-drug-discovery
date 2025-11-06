@@ -1,7 +1,11 @@
 import numpy as np
 import pytorch_lightning as pl
 from torch_geometric.datasets import MoleculeNet
-from src.utils.dataset_utils import DataLoader, GetTarget, ToLongTensor
+from src.utils.dataset_utils import (
+    DataLoader,
+    ConvertTargetType,
+    ConvertFeaturesToFloat,
+)
 from torch_geometric.transforms import Compose
 from src.utils.path_utils import get_data_dir
 import torch
@@ -50,43 +54,67 @@ class MoleculeNetDataModule(pl.LightningDataModule):
         MoleculeNet(root=self.data_dir, name=self.name)
 
     def setup(self, stage: str | None = None) -> None:
-        transforms = Compose([
-            GetTarget(self.target),
-            ToLongTensor(),
-        ])
-        # Add a transform to get the target as Long
+        # 1. Load the raw dataset *without* any transforms
         dataset = MoleculeNet(
-            root=self.data_dir, name=self.name, transform=
+            root=self.data_dir,
+            name=self.name,
+            transform=None,  # Load raw data first
         )
 
         rng = np.random.default_rng(seed=self.seed)
-
         all_indices = rng.permutation(len(dataset))
-        all_labels = torch.tensor([data.y for data in dataset])
-        nan_mask = torch.isnan(all_labels).squeeze().tolist()
 
-        valid_indices = [i for i in all_indices if not nan_mask[i]]
-        nan_indices = [i for i in all_indices if nan_mask[i]]
+        # 2. Build the nan_mask from the raw data.y, checking the specific target
+        # This is slow, but necessary for this splitting logic
+        all_labels_raw = torch.tensor([dataset[i].y[0, self.target] for i in all_indices])
+        nan_mask = torch.isnan(all_labels_raw).squeeze().tolist()
 
+        # 3. Split indices based on the *raw* NaN values
+        valid_indices = [i for i, is_nan in zip(all_indices, nan_mask) if not is_nan]
+        nan_indices = [i for i, is_nan in zip(all_indices, nan_mask) if is_nan]
+
+        # 4. Create subsets from the raw dataset
         self.data_train_unlabeled = dataset[nan_indices]
-
         valid_dataset = dataset[valid_indices]
 
         if self.subset_size is not None:
+            # Note: This subsets the valid data, not the whole dataset
             valid_dataset = valid_dataset[: self.subset_size]
 
-        valid_splits = np.array(self.splits[1:])
+        # --- Your original splitting logic for valid_dataset ---
+        # (This splits the `valid_dataset` into train/val/test)
+        valid_splits = np.array(self.splits[1:])  # Assumes splits[0] is not used here
         valid_props = valid_splits / valid_splits.sum()
 
         split_sizes = [int(len(valid_dataset) * prop) for prop in valid_props]
-
+        # Ensure splits cover the whole dataset
+        split_sizes[-1] = len(valid_dataset) - sum(split_sizes[:-1])
+        
         split_idx = np.cumsum(split_sizes)
 
         self.data_train_labeled = valid_dataset[: split_idx[0]]
         self.data_val = valid_dataset[split_idx[0] : split_idx[1]]
         self.data_test = valid_dataset[split_idx[1] :]
+        # --- End of splitting logic ---
 
-        # Set batch sizes. We want the labeled batch size to be the one given by the user, and the unlabeled one to be so that we have the same number of batches
+        # 5. Now, assign the correct transforms to the *final* datasets
+        
+        # Unlabeled data only needs features converted
+        self.data_train_unlabeled.transform = ConvertFeaturesToFloat()
+
+        # Labeled, validation, and test data need both transforms
+        labeled_transform = Compose(
+            [
+                ConvertTargetType(target=self.target, dtype=torch.long),
+                ConvertFeaturesToFloat(),
+            ]
+        )
+        
+        self.data_train_labeled.transform = labeled_transform
+        self.data_val.transform = labeled_transform
+        self.data_test.transform = labeled_transform
+
+        # --- Set batch sizes and print info ---
         self.batch_size_train_labeled = self.batch_size_train
         self.batch_size_train_unlabeled = self.batch_size_train
         # self.batch_size_train_unlabeled = int(
@@ -178,14 +206,15 @@ class MoleculeNetDataModule(pl.LightningDataModule):
     @property
     def num_features(self) -> int:
         return self.data_train_labeled.num_node_features
-    
+
     @property
     def num_classes(self) -> int:
-        return 1  # QM9 is a regression task
-    
+        return 1  # MoleculeNet is a binary classification task
+
     @property
     def task_type(self) -> str:
         return "classification"
+
 
 if __name__ == "__main__":
     dm = MoleculeNetDataModule(num_workers=1)

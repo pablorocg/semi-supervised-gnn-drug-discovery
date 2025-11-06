@@ -3,8 +3,9 @@ Source:
 https://github.com/pyg-team/pytorch_geometric/blob/master/torch_geometric/loader/dataloader.py
 
 Minor change to the Collater class such that the dataloader returns batches in
-the form (batch, y) instead of (batch). 
+the form (batch, y) instead of (batch).
 """
+
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -16,14 +17,52 @@ from torch_geometric.data.datapipes import DatasetAdapter
 from torch_geometric.typing import TensorFrame, torch_frame
 from torch_geometric.transforms import BaseTransform
 
-class GetTarget(BaseTransform):
-    def __init__(self, target: int | None = None) -> None:
-        self.target = [target]
+
+import torch
+from torch_geometric.data import Data
+from torch_geometric.transforms import BaseTransform
+
+
+class ConvertTargetType(BaseTransform):
+    """
+    A transform to select a target column (if specified)
+    and convert the target tensor 'y' to a specific dtype.
+    """
+
+    def __init__(self, target: int | None = None, dtype: torch.dtype = torch.float):
+        """
+        Args:
+            target (int | None, optional): The index of the target column
+                to select. If None, the entire 'data.y' tensor is converted.
+                Defaults to None.
+            dtype (torch.dtype, optional): The desired data type
+                (e.g., torch.long, torch.float). Defaults to torch.float.
+        """
+        super().__init__()
+        self.target = target
+        self.dtype = dtype
 
     def forward(self, data: Data) -> Data:
+        # Check if a specific target column is requested
         if self.target is not None:
-            data.y = data.y[:, self.target]
+            # Select the column and convert its type
+            data.y = data.y[:, [self.target]].to(self.dtype)
+        else:
+            # Convert the entire 'y' tensor
+            data.y = data.y.to(self.dtype)
         return data
+
+
+class ConvertFeaturesToFloat(BaseTransform):
+    """Converts node features 'x' to torch.float."""
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, data: Data) -> Data:
+        if data.x.dtype != torch.float:
+            data.x = data.x.float()
+        return data
+
 
 class Collater:
     def __init__(
@@ -45,7 +84,7 @@ class Collater:
                 exclude_keys=self.exclude_keys,
             )
             # return (batch, batch.y)
-            return batch # Modified to return only batch
+            return batch  # Modified to return only batch
         elif isinstance(elem, torch.Tensor):
             return default_collate(batch)
         elif isinstance(elem, TensorFrame):
@@ -58,7 +97,7 @@ class Collater:
             return batch
         elif isinstance(elem, Mapping):
             return {key: self([data[key] for data in batch]) for key in elem}
-        elif isinstance(elem, tuple) and hasattr(elem, '_fields'):
+        elif isinstance(elem, tuple) and hasattr(elem, "_fields"):
             return type(elem)(*(self(s) for s in zip(*batch)))
         elif isinstance(elem, Sequence) and not isinstance(elem, str):
             return [self(s) for s in zip(*batch)]
@@ -85,6 +124,7 @@ class DataLoader(torch.utils.data.DataLoader):
         **kwargs (optional): Additional arguments of
             :class:`torch.utils.data.DataLoader`.
     """
+
     def __init__(
         self,
         dataset: Dataset | Sequence[BaseData] | DatasetAdapter,
@@ -95,7 +135,7 @@ class DataLoader(torch.utils.data.DataLoader):
         **kwargs,
     ):
         # Remove for PyTorch Lightning:
-        kwargs.pop('collate_fn', None)
+        kwargs.pop("collate_fn", None)
 
         # Save for PyTorch Lightning < 1.6:
         self.follow_batch = follow_batch

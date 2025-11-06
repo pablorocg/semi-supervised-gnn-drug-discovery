@@ -7,13 +7,16 @@ import torch.nn as nn
 from torch.optim import SGD
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torchmetrics import MetricCollection
+
 from torchmetrics.classification import (
     BinaryAccuracy,
+    BinaryAveragePrecision,
     BinaryAUROC,
     BinaryF1Score,
     BinaryPrecision,
     BinaryRecall,
     MulticlassAccuracy,
+    MulticlassAveragePrecision,
     MulticlassAUROC,
     MulticlassF1Score,
     MulticlassPrecision,
@@ -90,7 +93,14 @@ class BaselineModel(L.LightningModule):
         labels = batch.y.view(-1, self.num_classes).float()
         loss = self.loss_fn(logits, labels)
         self.train_metrics(logits, labels)
-        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log(
+            "train/loss",
+            loss,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            batch_size=batch.y.size(0),
+        )
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -98,7 +108,14 @@ class BaselineModel(L.LightningModule):
         labels = batch.y.view(-1, self.num_classes).float()
         loss = self.loss_fn(logits, labels)
         self.val_metrics(logits, labels)
-        self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(
+            "val/loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            batch_size=batch.y.size(0),
+        )
         return loss
 
     def configure_optimizers(self):
@@ -163,6 +180,7 @@ class BaselineModel(L.LightningModule):
         if self.num_classes == 1:
             return MetricCollection(
                 {
+                    f"{prefix}/avg_precision": BinaryAveragePrecision(),
                     f"{prefix}/accuracy": BinaryAccuracy(),
                     f"{prefix}/precision": BinaryPrecision(),
                     f"{prefix}/recall": BinaryRecall(),
@@ -174,6 +192,9 @@ class BaselineModel(L.LightningModule):
         elif self.num_classes > 1:
             return MetricCollection(
                 {
+                    f"{prefix}/avg_precision": MulticlassAveragePrecision(
+                        num_classes=self.num_classes, average="macro"
+                    ),
                     f"{prefix}/accuracy": MulticlassAccuracy(
                         num_classes=self.num_classes, average="macro"
                     ),
@@ -256,10 +277,10 @@ if __name__ == "__main__":
     #     num_workers=1,
     # )
     data_module = MoleculeNetDataModule(
-        batch_size_train=32,
-        batch_size_inference=32,
-        num_workers=1,
-        subset_size=1000,
+        batch_size_train=256,
+        batch_size_inference=256,
+        num_workers=4,
+        
     )
     data_module.prepare_data()
     data_module.setup()
@@ -269,8 +290,6 @@ if __name__ == "__main__":
         num_classes=data_module.num_classes,
     )
 
-    # Run trainer in debug mode
-    trainer = Trainer(
-        fast_dev_run=True, max_epochs=1, callbacks=[TQDMProgressBar()], logger=False
-    )
+    # Run trainer in debug mode fast_dev_run=True,
+    trainer = Trainer(max_epochs=1000, callbacks=[TQDMProgressBar()], logger=False)
     trainer.fit(baseline_module, datamodule=data_module)

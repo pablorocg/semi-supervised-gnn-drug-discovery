@@ -7,9 +7,17 @@ import torch
 from torch_geometric.data import Data
 from torch_geometric.datasets import QM9
 from torch_geometric.transforms import BaseTransform
-from src.utils.dataset_utils import DataLoader, GetTarget
+from src.utils.dataset_utils import (
+    DataLoader,
+    ConvertTargetType,
+    ConvertFeaturesToFloat,
+)
+
+# import Compose for transforming data in torch geometric
+from torch_geometric.transforms import Compose
 from src.utils.path_utils import get_data_dir
 from pathlib import Path
+
 
 class QM9DataModule(pl.LightningDataModule):
     def __init__(
@@ -29,7 +37,6 @@ class QM9DataModule(pl.LightningDataModule):
         self.target = target
 
         self.data_dir = Path(get_data_dir()) / "QM9"
-
 
         self.batch_size_train = batch_size_train
         self.batch_size_inference = batch_size_inference
@@ -53,14 +60,21 @@ class QM9DataModule(pl.LightningDataModule):
         self.setup()  # Call setup to initialize the datasets
 
     def prepare_data(self) -> None:
-
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir, exist_ok=True)
         # Download data
         QM9(root=self.data_dir)
 
     def setup(self, stage: str | None = None) -> None:
-        dataset = QM9(root=self.data_dir, transform=GetTarget(self.target))
+        dataset = QM9(
+            root=self.data_dir,
+            transform=Compose(
+                [
+                    ConvertTargetType(target=self.target, dtype=torch.float),
+                    ConvertFeaturesToFloat(),
+                ]
+            ),
+        )
 
         # Shuffle dataset
         rng = np.random.default_rng(seed=self.seed)
@@ -139,7 +153,6 @@ class QM9DataModule(pl.LightningDataModule):
         )
 
     def ood_dataloaders(self) -> dict[str, DataLoader]:
-        
         return {
             dataset_name: DataLoader(
                 dataset,
@@ -172,15 +185,15 @@ class QM9DataModule(pl.LightningDataModule):
                 ood_dataloaders.append(val_dataloader)
                 ood_names.append(dataset_name)
             return ood_names, ood_dataloaders
-        
+
     @property
     def num_features(self) -> int:
         return self.data_train_labeled.num_node_features
-    
+
     @property
     def num_classes(self) -> int:
         return 1  # QM9 is a regression task
-    
+
     @property
     def task_type(self) -> str:
         return "regression"
@@ -189,15 +202,13 @@ class QM9DataModule(pl.LightningDataModule):
 if __name__ == "__main__":
     dm = QM9DataModule()
 
-    
     dm.prepare_data()
     dm.setup()
-
 
     print("Preparing data...")
     print(dm.num_features)
     print(dm.num_classes)
-    
+
     train_loader = dm.train_dataloader()
     for batch in train_loader:
         print(batch)
