@@ -1,0 +1,21 @@
+dataset_name: "qm9"
+
+num_outputs: 1 
+
+init:
+  _target_: qm9.QM9DataModule
+  data_augmentation: false
+  name: qm9
+  target: 2   # choose target property from QM9 dataset (0-18, there is 19 in total)
+  data_dir: ${oc.env.DATA_DIR}
+  batch_size_train: 100
+  batch_size_inference: 2048
+  num_workers: 4
+  #splits: [10, 109990, 10000, 10831] # this is just to compare performance to Mikkel's code
+  splits: [0.72, 0.08, 0.1, 0.1] # DEFAULT OPTION: 80% train, 10% validation, 10% test. Of the training data, 90% is for unlabeled and 10% for labeled.
+  seed: 0
+  subset_size: null
+  
+
+
+
