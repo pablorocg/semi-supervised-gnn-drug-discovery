@@ -22,7 +22,16 @@ import torch
 from torch_geometric.data import Data
 from torch_geometric.transforms import BaseTransform
 
+class GetTarget(BaseTransform):
+    def __init__(self, target: int | None = None) -> None:
+        self.target = [target]
 
+    def forward(self, data: Data) -> Data:
+        if self.target is not None:
+            data.y = data.y[:, self.target]
+        return data
+    
+    
 class ConvertTargetType(BaseTransform):
     """
     A transform to select a target column (if specified)
@@ -62,6 +71,23 @@ class ConvertFeaturesToFloat(BaseTransform):
         if data.x.dtype != torch.float:
             data.x = data.x.float()
         return data
+
+
+class TwoAugmentationsTransform(BaseTransform):
+    """Creates two augmented versions of the input data object."""
+    def __init__(self, transform: BaseTransform):
+        super().__init__()
+        self.transform = transform
+
+    def forward(self, data: Data) -> tuple[Data, Data]:
+        data1 = self.transform(data)
+        data2 = self.transform(data)
+        return data1, data2
+
+
+
+
+
 
 
 class Collater:

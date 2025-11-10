@@ -9,6 +9,9 @@ from src.utils.dataset_utils import (
 from torch_geometric.transforms import Compose
 from src.utils.path_utils import get_data_dir
 import torch
+from pytorch_lightning.utilities.combined_loader import CombinedLoader
+
+
 
 
 class MoleculeNetDataModule(pl.LightningDataModule):
@@ -145,7 +148,18 @@ class MoleculeNetDataModule(pl.LightningDataModule):
             "neg_ratio": neg_ratio,
         }
     
-    def train_dataloader(self, shuffle=True) -> DataLoader:
+
+    def train_dataloader(self) -> CombinedLoader | DataLoader:
+        
+        return CombinedLoader(
+            {
+                "labeled": self.supervised_train_dataloader(),
+                "unlabeled": self.unsupervised_train_dataloader(),
+            },
+            mode="max_size_cycle",
+        )
+
+    def supervised_train_dataloader(self, shuffle=True) -> DataLoader:
         return DataLoader(
             self.data_train_labeled,
             batch_size=self.batch_size_train_labeled,

@@ -11,7 +11,9 @@ from src.utils.dataset_utils import (
     DataLoader,
     ConvertTargetType,
     ConvertFeaturesToFloat,
+    GetTarget,
 )
+from pytorch_lightning.utilities.combined_loader import CombinedLoader
 
 # import Compose for transforming data in torch geometric
 from torch_geometric.transforms import Compose
@@ -30,6 +32,7 @@ class QM9DataModule(pl.LightningDataModule):
         seed: int = 0,
         subset_size: int | None = None,
         data_augmentation: bool = False,  # Unused but here for compatibility
+        mode="semi_supervised", 
         name: str = "qm9",
         ood: bool = False,
     ) -> None:
@@ -47,6 +50,7 @@ class QM9DataModule(pl.LightningDataModule):
         self.data_augmentaion = data_augmentation
         self.name = name
         self.ood = ood
+        self.mode = mode
 
         self.data_train_unlabeled = None
         self.data_train_labeled = None
@@ -57,7 +61,7 @@ class QM9DataModule(pl.LightningDataModule):
         self.batch_size_train_labeled = None
         self.batch_size_train_unlabeled = None
 
-        self.setup()  # Call setup to initialize the datasets
+        
 
     def prepare_data(self) -> None:
         if not os.path.exists(self.data_dir):
@@ -68,12 +72,13 @@ class QM9DataModule(pl.LightningDataModule):
     def setup(self, stage: str | None = None) -> None:
         dataset = QM9(
             root=self.data_dir,
-            transform=Compose(
-                [
-                    ConvertTargetType(target=self.target, dtype=torch.float),
-                    ConvertFeaturesToFloat(),
-                ]
-            ),
+            transform=GetTarget(self.target),
+            # Compose(
+            #     [
+            #         ConvertTargetType(target=self.target, dtype=torch.float),
+            #         ConvertFeaturesToFloat(),
+            #     ]
+            # ),
         )
 
         # Shuffle dataset
@@ -112,7 +117,26 @@ class QM9DataModule(pl.LightningDataModule):
             f"Batch sizes: labeled={self.batch_size_train_labeled}, unlabeled={self.batch_size_train_unlabeled}"
         )
 
-    def train_dataloader(self, shuffle=True) -> DataLoader:
+    def train_dataloader(self) -> CombinedLoader:
+
+        if self.mode == "supervised":
+            return CombinedLoader(
+                {
+                    "labeled": self.supervised_train_dataloader(),
+                },
+                mode="max_size_cycle",
+            )
+        
+        elif self.mode == "semi_supervised":
+            return CombinedLoader(
+                {
+                    "labeled": self.supervised_train_dataloader(),
+                    "unlabeled": self.unsupervised_train_dataloader(),
+                },
+                mode="max_size_cycle",
+            )
+
+    def supervised_train_dataloader(self, shuffle=True) -> DataLoader:
         return DataLoader(
             self.data_train_labeled,
             batch_size=self.batch_size_train_labeled,
@@ -200,9 +224,9 @@ class QM9DataModule(pl.LightningDataModule):
 
 
 if __name__ == "__main__":
-    dm = QM9DataModule()
+    dm = QM9DataModule(subset_size=1000)
 
-    dm.prepare_data()
+    
     dm.setup()
 
     print("Preparing data...")
@@ -210,6 +234,19 @@ if __name__ == "__main__":
     print(dm.num_classes)
 
     train_loader = dm.train_dataloader()
-    for batch in train_loader:
-        print(batch)
+
+    for batch, batch_idx, dataloader_idx in train_loader:
+        print(f"{batch}, {batch_idx=}, {dataloader_idx=}")
+        # {
+        #     'labeled': DataBatch(x=[547, 11], edge_index=[2, 1142], edge_attr=[1142, 4], y=[32, 1], pos=[547, 3], z=[547], smiles=[32], name=[32], idx=[32], batch=[547], ptr=[33]), 
+        #     'unlabeled': DataBatch(x=[580, 11], edge_index=[2, 1196], edge_attr=[1196, 4], y=[32, 1], pos=[580, 3], z=[580], smiles=[32], name=[32], idx=[32], batch=[580], ptr=[33])
+        # }, 
+        # batch_idx=0, 
+        # dataloader_idx=0
+
+        # Show features of first node in labeled batch and its type
+        print(batch['labeled'].x[0], batch['labeled'].x[0].dtype)
+        # Show target of first graph in labeled batch
+        print(batch['labeled'].y[0], batch['labeled'].y[0].dtype)
+
         break

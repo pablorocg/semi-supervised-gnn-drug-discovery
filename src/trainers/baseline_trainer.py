@@ -3,6 +3,9 @@ from torch_geometric.nn import GCN
 from src.utils.path_utils import get_logs_dir
 from pytorch_lightning import Trainer
 from src.lightning_modules.baseline_module import BaselineGNNModule
+from hydra.utils import instantiate
+
+
 
 
 def main():
