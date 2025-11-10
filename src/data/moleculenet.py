@@ -129,6 +129,22 @@ class MoleculeNetDataModule(pl.LightningDataModule):
             f"Batch sizes: labeled={self.batch_size_train_labeled}, unlabeled={self.batch_size_train_unlabeled}"
         )
 
+    def compute_class_stats(self) -> dict[str, float]:
+        labels = torch.tensor([
+            data.y.item() for data in self.data_train_labeled
+        ])
+        num_positive = (labels == 1).sum().item()
+        num_negative = (labels == 0).sum().item()
+        total = len(labels)
+        pos_ratio = num_positive / total
+        neg_ratio = num_negative / total
+        return {
+            "num_positive": num_positive,
+            "num_negative": num_negative,
+            "pos_ratio": pos_ratio,
+            "neg_ratio": neg_ratio,
+        }
+    
     def train_dataloader(self, shuffle=True) -> DataLoader:
         return DataLoader(
             self.data_train_labeled,
@@ -220,7 +236,14 @@ if __name__ == "__main__":
     dm = MoleculeNetDataModule(num_workers=1)
     dm.prepare_data()
     dm.setup()
-    train_loader = dm.train_dataloader()
-    for batch in train_loader:
-        print(batch)
-        break
+    # train_loader = dm.train_dataloader()
+    # for batch in train_loader:
+    #     print(batch)
+    #     break
+
+    for target in range(128):
+        dm = MoleculeNetDataModule(target=target, num_workers=8)
+        dm.prepare_data()
+        dm.setup()
+        class_stats = dm.compute_class_stats()
+        print(f"Target {target}: {class_stats}")

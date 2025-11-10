@@ -236,7 +236,7 @@ class BaselineModel(L.LightningModule):
         if self.train_metrics:
             metrics = self.train_metrics.compute()
             self.log_dict(
-                metrics, on_step=False, on_epoch=True, sync_dist=True, prog_bar=True
+                metrics, on_step=False, on_epoch=True, sync_dist=True, prog_bar=False
             )
             self.train_metrics.reset()
 
@@ -277,6 +277,7 @@ if __name__ == "__main__":
     #     num_workers=1,
     # )
     data_module = MoleculeNetDataModule(
+        target=4,  
         batch_size_train=256,
         batch_size_inference=256,
         num_workers=4,
@@ -291,5 +292,5 @@ if __name__ == "__main__":
     )
 
     # Run trainer in debug mode fast_dev_run=True,
-    trainer = Trainer(max_epochs=1000, callbacks=[TQDMProgressBar()], logger=False)
+    trainer = Trainer(max_epochs=100, callbacks=[TQDMProgressBar()], logger=False)
     trainer.fit(baseline_module, datamodule=data_module)
