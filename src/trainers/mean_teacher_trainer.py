@@ -7,12 +7,18 @@ from src.models.gcn import GCN
 from src.utils.path_utils import get_logs_dir
 from src.lightning_modules.mean_teacher import MeanTeacherRegressionModel
 
-data_module = QM9DataModule(
-    target=0,
-    batch_size_train=32,
-    batch_size_inference=32,
-    num_workers=4,
-)
+
+@hydra.main(config_path="../../config/dataset", config_name="qm9")
+def main(cfg):
+
+
+
+    data_module = QM9DataModule(
+        target=0,
+        batch_size_train=32,
+        batch_size_inference=32,
+        num_workers=4,
+    )
 
 # data_module.prepare_data()
 data_module.setup()

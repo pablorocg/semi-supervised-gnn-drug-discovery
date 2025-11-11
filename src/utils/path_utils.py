@@ -17,14 +17,14 @@ def get_data_dir() -> str:
     return source_data_dir
 
 
-def get_splits_dir() -> str:
+def get_configs_dir() -> str:
     """
-    Get the splits directory from environment variable or use default.
+    Get the configs directory from environment variable or use default.
     """
-    splits_dir = os.getenv("SPLITS_DIR", None)
+    splits_dir = os.getenv("CONFIGS_DIR", None)
 
     if splits_dir is None:
-        raise EnvironmentError("SPLITS_DIR environment variable is not set.")
+        raise EnvironmentError("CONFIGS_DIR environment variable is not set.")
     
     return splits_dir
 

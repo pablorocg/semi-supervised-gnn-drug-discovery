@@ -20,66 +20,53 @@ from torchmetrics.regression import (
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# class FeatureMasking(T.BaseTransform):
-#     """
-#     A PyG-compatible transform that wraps the 'mask_feature' function.
-
-#     Args:
-#         p (float): The masking ratio.
-#         mode (str): The masking scheme ('row', 'col', 'all').
-#         fill_value (float): The value for masked features.
-#     """
-#     def __init__(self, p: float = 0.5, mode: str = 'col', fill_value: float = 0.0):
-#         self.p = p
-#         self.mode = mode
-#         self.fill_value = fill_value
-
-#     def forward(self, data: Data) -> Data:
-#         # self.training is a special attribute from BaseTransform.
-#         # It's automatically set to True by model.train()
-#         # and False by model.eval().
-#         # This is the *only* way to call your function.
-
-#         # We clone to avoid modifying the original data object in-place
-#         data_clone = data.clone()
-
-#         # Call your function, passing self.training to its training flag
-#         masked_x, _ = mask_feature(
-#             x=data_clone.x,
-#             p=self.p,
-#             mode=self.mode,
-#             fill_value=self.fill_value,
-#             training=self.training  # <-- This is the key!
-#         )
-
-#         data_clone.x = masked_x
-#         return data_clone
-
-#     def __repr__(self) -> str:
-#         # This just makes it look nice when you print the transform
-#         return f'{self.__class__.__name__}(p={self.p}, mode={self.mode})'
-
 
 class MeanTeacherLoss(nn.Module):
     """
-    Mean Teacher Loss combining supervised classification loss and consistency loss
-    between student and teacher models.
+    Calculates the Mean Teacher loss based on arXiv:1703.01780v6.
 
-    L_total = L_supervised(logits_student, labels) + consistency_weight(t) * L_consistency(logits_student, logits_teacher)
+    This loss combines a supervised loss (sum of MSE) on labeled data and
+    a consistency loss (mean of MSE) on all data (labeled + unlabeled).
 
-    Args:
-        consistency_weight (float): Weight for the consistency loss term
-            (can change with steps from lambda_t to lambda_T).
+    L_total = L_supervised_sum + consistency_weight(t) * L_consistency_mean
 
-    Returns:
-        total_loss (torch.Tensor): The combined loss value.
-        supervised_loss (torch.Tensor): The supervised loss component.
-        consistency_loss (torch.Tensor): The consistency loss component.
+    The supervised loss uses reduction='sum' to correctly scale its gradient
+    contribution by the number of labeled examples in the batch, as described
+    in the paper's appendix (B.1).
+
+    The consistency loss uses reduction='mean' (default).
     """
 
-    def __init__(self, consistency_weight: float = 1.0):
+    def __init__(
+        self,
+        initial_weight: float = 0.0,
+        max_weight: float = 1.0,
+        steps: int = 5000,
+    ):
+        """
+        Initializes the stateless Mean Teacher Loss module.
+        """
         super().__init__()
-        self.consistency_weight = consistency_weight
+
+        self.max_weight = max_weight
+        self.initial_weight = initial_weight
+        self.steps = steps
+
+    def compute_consistency_weight(self, timestep: float) -> torch.Tensor:
+        """
+        Computes the consistency weight at a given timestep using a sigmoid ramp-up.
+
+        Args:
+            timestep: Current training step (0 to max_steps).
+        Returns:
+            torch.Tensor: The consistency weight at the current timestep.
+        """
+        if timestep >= self.steps:
+            return torch.tensor(self.max_weight)
+        else:
+            phase = 1.0 - timestep / self.steps
+            weight = self.max_weight * float(torch.exp(-5.0 * phase * phase))
+            return torch.tensor(weight)
 
     def forward(
         self,
@@ -87,59 +74,51 @@ class MeanTeacherLoss(nn.Module):
         unlabeled_logits_student: torch.Tensor,
         labeled_logits_teacher: torch.Tensor,
         unlabeled_logits_teacher: torch.Tensor,
-        labels: torch.Tensor = None,
-        consistency_weight: float = 1.0,
-    ):
+        labels: torch.Tensor,
+        timestep: float,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Compute the Mean Teacher loss.
+        Computes the Mean Teacher loss.
 
         Args:
-            logits_student: Logits from the student model (B, C)
-            logits_teacher: Logits from the teacher model (B, C)
-            labels: Ground truth labels (B,) for cross_entropy or (B, C) for bce/mse
-                   Can be None for unlabeled data (only consistency loss computed)
-            consistency_weight: Optional override for the consistency weight
+            labeled_logits_student: Student predictions for labeled data [BL, C].
+            unlabeled_logits_student: Student predictions for unlabeled data [BU, C].
+            labeled_logits_teacher: Teacher predictions for labeled data [BL, C].
+                                     (Should be computed within torch.no_grad())
+            unlabeled_logits_teacher: Teacher predictions for unlabeled data [BU, C].
+                                      (Should be computed within torch.no_grad())
+            labels: Ground truth for labeled data [BL, C].
+            consistency_weight: The current, ramped-up consistency weight (w(t)).
 
         Returns:
-            tuple: (total_loss, supervised_loss, consistency_loss)
+            A tuple containing:
+            - total_loss (torch.Tensor): The combined loss.
+            - supervised_loss (torch.Tensor): The supervised component (sum).
+            - consistency_loss (torch.Tensor): The consistency component (mean).
         """
-        # Use provided consistency weight or fall back to instance default
-        weight = (
-            consistency_weight
-            if consistency_weight is not None
-            else self.consistency_weight
-        )
 
-        # Compute supervised loss only if labels are provided
-        if labels is not None:
-            supervised_loss = F.mse_loss(labeled_logits_student, labels)
-        else:
-            supervised_loss = torch.tensor(0.0, device=labeled_logits_student.device)
-
-        # Concatenate labeled and unlabeled logits for consistency loss
-        logits_student = torch.cat(
+        # Consistency Loss (L_consistency_mean)
+        # Calculated on ALL data (labeled + unlabeled).
+        # We concatenate the tensors for a single, efficient calculation.
+        all_logits_student = torch.cat(
             [labeled_logits_student, unlabeled_logits_student], dim=0
         )
-        logits_teacher = torch.cat(
+        all_logits_teacher = torch.cat(
             [labeled_logits_teacher, unlabeled_logits_teacher], dim=0
         )
 
-        # Use MSE for consistency loss
-        consistency_loss = F.mse_loss(logits_student, logits_teacher)
+        consistency_loss = self.compute_consistency_weight(timestep) * F.mse_loss(
+            all_logits_student, all_logits_teacher
+        )
 
-        # Combine losses
-        total_loss = supervised_loss + weight * consistency_loss
+        # Supervised Loss (L_supervised_sum)
+        # Calculated ONLY on labeled data.
+        supervised_loss = F.mse_loss(labeled_logits_student, labels, reduction="mean")
+
+        # L_total = 100 * p_labeled * L_supervised_sum + w(t) * L_consistency_mean
+        total_loss = supervised_loss + consistency_loss
 
         return total_loss, supervised_loss, consistency_loss
-
-    def update_consistency_weight(self, new_weight: float):
-        """
-        Update the consistency weight (useful for ramping schedules).
-
-        Args:
-            new_weight: New consistency weight value
-        """
-        self.consistency_weight = new_weight
 
 
 class MeanTeacherRegressionModel(L.LightningModule):
@@ -184,7 +163,7 @@ class MeanTeacherRegressionModel(L.LightningModule):
         self.test_metrics = self.configure_metrics("test")
 
         # Loss config
-        self.loss_fn = MeanTeacherLoss(self.hparams.consistency_weight)
+        self.loss_fn = MeanTeacherLoss()
 
         # Model config
         self.student_model = model
@@ -197,16 +176,18 @@ class MeanTeacherRegressionModel(L.LightningModule):
         if self.hparams.compile:
             self.student_model = torch.compile(self.student_model, dynamic=True)
             log.info("Compiled student model with torch.compile()")
-        
+
         # Config EMA for teacher model
         self.ema = ExponentialMovingAverage(
             self.student_model.parameters(), decay=self.hparams.ema_decay
         )
-        
+
     def on_fit_start(self):
         """Move EMA to the correct device after Lightning has moved the model."""
         self.student_model.to(self.device)
         self.ema.to(self.device)
+
+        self._config_consistency_weight()
 
     def forward(self, x):
         return self.student_model(x)
@@ -244,7 +225,7 @@ class MeanTeacherRegressionModel(L.LightningModule):
             labeled_logits_teacher=labeled_preds_teach,  # [BL, C]
             unlabeled_logits_teacher=unlabeled_preds_teach,  # [BU, C]
             labels=labels,  # [BL, C]
-            consistency_weight=consistency_weight
+            timestep=self.global_step,
         )
 
         # Log training metrics
@@ -256,31 +237,28 @@ class MeanTeacherRegressionModel(L.LightningModule):
             supervised_loss,
             on_step=False,
             on_epoch=True,
-            # batch_size=labeled.num_graphs,  # [BL]
         )
         self.log(
             "train/consistency_loss",
             consistency_loss,
-            on_step=True,
+            on_step=False,
             on_epoch=True,
-            # batch_size=labeled.num_graphs + unlabeled.num_graphs,  # [BL + BU]
         )
         self.log(
             "train/loss",
             total_loss,
-            on_step=False,
+            on_step=True,
             on_epoch=True,
-            prog_bar=False,
-            # batch_size=labeled.num_graphs + unlabeled.num_graphs,  # [BL + BU]
+            prog_bar=True,
         )
 
         # Log consistency weight
         self.log(
             "train/consistency_weight",
             consistency_weight,
-            on_step=False,
+            on_step=True,
             on_epoch=True,
-            prog_bar=False
+            prog_bar=False,
         )
 
         return total_loss
@@ -310,7 +288,6 @@ class MeanTeacherRegressionModel(L.LightningModule):
             on_step=True,
             on_epoch=True,
             prog_bar=True,
-            batch_size=batch.num_graphs,
         )
         return supervised_loss
 
@@ -336,13 +313,12 @@ class MeanTeacherRegressionModel(L.LightningModule):
             on_step=False,
             on_epoch=True,
             prog_bar=True,
-            batch_size=batch.num_graphs,
         )
         return loss
 
     def configure_optimizers(self):
         optimizer = SGD(
-            self.student_model.parameters(),  # Only optimize student
+            self.student_model.parameters(),
             lr=self.hparams.learning_rate,
             weight_decay=self.hparams.weight_decay,
             momentum=self.hparams.momentum,
@@ -350,22 +326,12 @@ class MeanTeacherRegressionModel(L.LightningModule):
         )
 
         steps_per_epoch = self.trainer.estimated_stepping_batches
-
         total_steps = self.trainer.max_epochs * steps_per_epoch
         warmup_steps = self.hparams.warmup_epochs * steps_per_epoch
+
         cosine_steps = max(
             1, int(self.hparams.cosine_period_ratio * (total_steps - warmup_steps))
         )
-
-        log.info(f"Optimizer: SGD, LR: {self.hparams.learning_rate}")
-        log.info(
-            f"Total steps: {total_steps}, Warmup steps: {warmup_steps}, Cosine steps: {cosine_steps}"
-        )
-        log.info(
-            f"EMA decay: {self.hparams.ema_decay}, Max consistency weight: {self.hparams.max_consistency_weight}"
-        )
-        log.info(f"Consistency rampup epochs: {self.hparams.consistency_rampup_epochs}")
-
         cosine_scheduler = CosineAnnealingLR(optimizer, T_max=cosine_steps)
 
         if self.hparams.warmup_epochs > 0 and warmup_steps > 0:
@@ -433,6 +399,13 @@ class MeanTeacherRegressionModel(L.LightningModule):
         self.student_model.load_state_dict(state_dict)
         log.info(f"Weights loaded from {weights_path}")
 
+    def _config_consistency_weight(self):
+        """Configures the consistency weight schedule."""
+        rampup_epochs = self.hparams.consistency_rampup_epochs
+        self.total_rampup_steps = (
+            rampup_epochs * self.trainer.estimated_stepping_batches
+        )
+
     def _get_current_consistency_weight(self) -> torch.Tensor:
         """
         Calculates the consistency weight based on the ramp-up schedule
@@ -442,23 +415,28 @@ class MeanTeacherRegressionModel(L.LightningModule):
             torch.Tensor: The consistency weight for the current step.
         """
         rampup_epochs = self.hparams.consistency_rampup_epochs
-        
+
         # If ramp-up is 0, use the max weight immediately
         if rampup_epochs == 0 or self.total_rampup_steps == 0:
             return torch.tensor(self.hparams.max_consistency_weight, device=self.device)
 
         # self.global_step is tracked by Lightning
-        current_step = torch.tensor(self.global_step, dtype=torch.float32, device=self.device)
-        total_steps = torch.tensor(self.total_rampup_steps, dtype=torch.float32, device=self.device)
+        current_step = torch.tensor(
+            self.global_step, dtype=torch.float32, device=self.device
+        )
+        total_steps = torch.tensor(
+            self.total_rampup_steps, dtype=torch.float32, device=self.device
+        )
 
         # Calculate current ramp-up fraction, x \in [0, 1]
         x = torch.clamp(current_step / total_steps, 0.0, 1.0)
 
         # Calculate sigmoid-shaped ramp-up: e^(-5 * (1-x)^2)
-        # This is the function described in the paper 
+        # This is the function described in the paper
         ramp_value = torch.exp(-5.0 * torch.pow(1.0 - x, 2))
 
         current_weight = self.hparams.max_consistency_weight * ramp_value
+
         return current_weight
 
 
@@ -477,7 +455,7 @@ if __name__ == "__main__":
         target=0,
     )
 
-    model_name = "GCN"
+    model_name = "GIN"
 
     if model_name == "GIN":
         model = GIN(
@@ -504,8 +482,8 @@ if __name__ == "__main__":
         max_epochs=150,
         accelerator="auto",
         devices="auto",
-        precision="16-mixed" if torch.cuda.is_available() else "32-true" ,
+        precision="16-mixed" if torch.cuda.is_available() else "32-true",
         logger=WandbLogger(project="mean-teacher-graph-regression"),
     )
 
-    trainer.fit(model = mean_teacher_model, datamodule=data_module)
+    trainer.fit(model=mean_teacher_model, datamodule=data_module)

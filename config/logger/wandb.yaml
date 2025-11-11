@@ -8,4 +8,4 @@ job_type: test
 entity: bnns-for-molecules
 project_name: semi-supervised-ensembles
 disable: false
-local_dir: ./logs #Directory to save logs
+local_dir: ${oc.env.LOGS_DIR} #Directory to save logs

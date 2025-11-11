@@ -102,12 +102,11 @@ class QM9DataModule(pl.LightningDataModule):
         self.data_val = dataset[split_idx[1] : split_idx[2]]
         self.data_test = dataset[split_idx[2] :]
 
-        # Set batch sizes. We want the labeled batch size to be the one given by the user, and the unlabeled one to be so that we have the same number of batches
+        # Set batch sizes. We want the labeled batch size to be the one given by the user, 
+        # and the unlabeled one to be so that we have the same number of batches
         self.batch_size_train_labeled = self.batch_size_train
         self.batch_size_train_unlabeled = self.batch_size_train
-        # self.batch_size_train_unlabeled = int(
-        #    self.batch_size_train * len(self.data_train_unlabeled) / len(self.data_train_labeled)
-        # )
+
 
         print(
             f"QM9 dataset loaded with {len(self.data_train_labeled)} labeled, {len(self.data_train_unlabeled)} unlabeled, "
@@ -175,40 +174,6 @@ class QM9DataModule(pl.LightningDataModule):
             pin_memory=True,
             persistent_workers=True,
         )
-
-    def ood_dataloaders(self) -> dict[str, DataLoader]:
-        return {
-            dataset_name: DataLoader(
-                dataset,
-                batch_size=self.batch_size_inference,
-                num_workers=self.num_workers,
-                shuffle=False,
-                pin_memory=True,
-                persistent_workers=True,
-            )
-            for dataset_name, dataset in self.ood_datasets.items()
-        }
-
-    def ood_dataloader(self) -> list[DataLoader]:
-        """Returns a list of DataLoader for each OOD dataset."""
-        if self.ood_datasets is None:
-            return [], []
-        else:
-            ood_dataloaders = []
-            ood_names = []
-            # for dm in self.ood_datasets:
-            for dataset_name, dataset in self.ood_datasets.items():
-                val_dataloader = DataLoader(
-                    dataset,
-                    batch_size=self.batch_size_inference,
-                    num_workers=self.num_workers,
-                    shuffle=False,
-                    pin_memory=True,
-                    persistent_workers=True,
-                )
-                ood_dataloaders.append(val_dataloader)
-                ood_names.append(dataset_name)
-            return ood_names, ood_dataloaders
 
     @property
     def num_features(self) -> int:
