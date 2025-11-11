@@ -138,7 +138,7 @@ class MoleculeNetDataModule(pl.LightningDataModule):
         if isinstance(self.hparams.target, list):
             return len(self.hparams.target)
         elif isinstance(self.hparams.target, int):
-            return self.hparams.target
+            return 1
         else:
             return MoleculeNet(root=self.data_dir, name=self.hparams.name).num_classes
 

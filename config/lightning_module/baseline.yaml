@@ -1,0 +1,13 @@
+# configs/lightning_module/baseline.yaml
+
+init:
+  _target_: src.lightning_modules.baseline.BaselineModule
+  learning_rate: 0.001
+  warmup_epochs: 10
+  cosine_period_ratio: 0.5
+  compile: false
+  weights: null
+  weight_decay: 1e-4
+  nesterov: true
+  momentum: 0.9
+  augmentations: null

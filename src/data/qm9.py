@@ -165,12 +165,12 @@ class QM9DataModule(pl.LightningDataModule):
 
     @property
     def num_features(self) -> int:
-        return QM9.num_node_features
+        return self.data_train_labeled.num_node_features
 
     @property
     def num_tasks(self) -> int:
         if isinstance(self.hparams.target, int):
-            return self.hparams.target
+            return 1
         elif isinstance(self.hparams.target, list):
             return len(self.hparams.target)
         else:

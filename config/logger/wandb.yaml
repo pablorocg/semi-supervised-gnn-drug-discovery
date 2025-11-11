@@ -2,12 +2,15 @@
 
 wandb:
   _target_: pytorch_lightning.loggers.WandbLogger
-  project_name: "molecule-property-prediction"
-  run_name: "${dataset.name}_${model.name}_${now:%Y-%m-%d_%H-%M-%S}"
-  save_dir: "${oc.env.LOGS_DIR}"
+  name: "${dataset.name}_${model.name}_${now:%Y-%m-%d_%H-%M-%S}"  
+  project: "molecule-property-prediction"  
+  save_dir: "${oc.env:LOGS_DIR,./logs}" 
   offline: false
   log_model: false
-  tags: 
+  tags:  
     - "${dataset.name}"
     - "${model.name}"
-  notes: "Experiment with ${dataset.name} dataset"
+  notes: "Experiment with ${dataset.name} dataset"  
+
+
+

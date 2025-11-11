@@ -13,8 +13,8 @@ from src.utils.utils import seed_everything
 
 @hydra.main(
     config_path=get_configs_dir(),
-    config_name="baseline_config",  # Sin .yaml
-    version_base="1.3",
+    config_name="baseline_config.yaml",  
+    version_base="1.1",
 )
 def main(cfg: DictConfig) -> None:
     """Main training pipeline."""
@@ -29,15 +29,16 @@ def main(cfg: DictConfig) -> None:
         dm = instantiate(cfg.dataset.init, _target_=QM9DataModule)
     else:
         dm = instantiate(cfg.dataset.init, _target_=MoleculeNetDataModule)
+
     
+    dm.setup('fit')
+
     # Get dataset properties
     n_outputs = dm.num_tasks
     task_type = dm.task_type
-    
-    # Get input feature dimension from a sample batch
-    dm.setup('fit')
-    sample_batch = next(iter(dm.train_dataloader()))
-    in_channels = sample_batch.x.shape[1]
+    in_channels = dm.num_features
+
+    print(f"Number of input features: {in_channels}, type of task: {task_type}, number of outputs: {n_outputs}")
     
     # Instantiate model with dynamic in_channels and out_channels
     model = instantiate(

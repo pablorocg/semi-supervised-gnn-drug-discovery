@@ -112,7 +112,7 @@ class BaselineModule(L.LightningModule):
         self.log(
             "train/loss",
             loss,
-            on_step=False,
+            on_step=True,
             on_epoch=True,
             batch_size=labeled.num_graphs,
         )
