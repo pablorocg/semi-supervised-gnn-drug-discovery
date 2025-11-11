@@ -144,7 +144,11 @@ dmypy.json
 .pypirc
 
 # Project-specific
-
+*log
+*.wandb
+.json
+.yaml
+wandb/
 checkpoints/
 logs/
 *.png
@@ -153,3 +157,4 @@ logs/
 *.gif
 *.pdf
 .vscode/settings.json
+mean-teacher-graph-regression/*
