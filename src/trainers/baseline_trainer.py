@@ -1,47 +1,74 @@
+import hydra
+import torch
 from hydra.utils import instantiate
+from omegaconf import DictConfig, OmegaConf
+from pytorch_lightning import Trainer
+from pytorch_lightning.loggers import WandbLogger
 from src.data.moleculenet import MoleculeNetDataModule
 from src.data.qm9 import QM9DataModule
 from src.lightning_modules.baseline import BaselineModule
-
-
-
-
-from itertools import chain
-import hydra
-import torch
-from omegaconf import OmegaConf
-
-from src.utils.utils import seed_everything
 from src.utils.path_utils import get_configs_dir
+from src.utils.utils import seed_everything
 
 
 @hydra.main(
     config_path=get_configs_dir(),
-    config_name="baseline_config.yaml",
-    version_base=None,
+    config_name="baseline_config",  # Sin .yaml
+    version_base="1.3",
 )
-def main(cfg):
-    # print out the full config
+def main(cfg: DictConfig) -> None:
+    """Main training pipeline."""
+    # Print full config
     print(OmegaConf.to_yaml(cfg))
-
-    seed_everything(cfg.seed, cfg.force_deterministic)
-
-
-    # Create an instance of the wandblogger and initialize it
     
-    # logger = hydra.utils.instantiate(cfg.logger)
-    # hparams = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
-    # logger.init_run(hparams)
-
-    # dm = hydra.utils.instantiate(cfg.dataset.init)
-
-    # model = hydra.utils.instantiate(cfg.model.init)
-
-    # trainer = hydra.utils.instantiate(cfg.trainer.init, models=models, logger=logger, datamodule=dm, device=device)
-
-    # results = trainer.train(**cfg.trainer.train)
-    # results = torch.Tensor(results)
-
+    # Set seed for reproducibility
+    seed_everything(cfg.seed, cfg.force_deterministic)
+    
+    # Instantiate datamodule based on dataset name
+    if cfg.dataset.name == "QM9":
+        dm = instantiate(cfg.dataset.init, _target_=QM9DataModule)
+    else:
+        dm = instantiate(cfg.dataset.init, _target_=MoleculeNetDataModule)
+    
+    # Get dataset properties
+    n_outputs = dm.num_tasks
+    task_type = dm.task_type
+    
+    # Get input feature dimension from a sample batch
+    dm.setup('fit')
+    sample_batch = next(iter(dm.train_dataloader()))
+    in_channels = sample_batch.x.shape[1]
+    
+    # Instantiate model with dynamic in_channels and out_channels
+    model = instantiate(
+        cfg.model.init,
+        _recursive_=False,
+        in_channels=in_channels,
+        out_channels=n_outputs,
+    )
+    
+    # Create lightning module
+    lightning_module = instantiate(
+        cfg.lightning_module.init,
+        _target_=BaselineModule,
+        model=model,
+        num_outputs=n_outputs,
+        task_type=task_type,
+    )
+    
+    # Setup logger
+    logger = instantiate(cfg.logger.wandb, _target_=WandbLogger)
+    
+    # Instantiate trainer
+    trainer = instantiate(
+        cfg.trainer.init,
+        _target_=Trainer,
+        logger=logger,
+    )
+    
+    # Train and test
+    trainer.fit(model=lightning_module, datamodule=dm)
+    trainer.test(model=lightning_module, datamodule=dm)
 
 
 if __name__ == "__main__":

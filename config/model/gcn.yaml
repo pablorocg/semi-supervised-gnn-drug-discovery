@@ -1,9 +1,9 @@
-defaults:
-  - _self_
+# configs/model/gcn.yaml
 
-name: gcn
+name: "GCN"
 
 init:
-  _target_: models.GCN
-  _partial_: false
-  num_node_features: 11
+  _target_: src.models.gcn.GCN
+  _recursive_: false
+  hidden_channels: 128
+  num_layers: 4
