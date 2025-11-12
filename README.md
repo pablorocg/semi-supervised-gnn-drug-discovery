@@ -61,24 +61,24 @@ To be documented.
 
 ## Tasks
 
-|  **Task**  |  **Assigned to**  |  **Status**  |  **Comments**  |
-|--------|---------------|----------|------------|
-|Setup Dataset Module for QM9||Done|Regression task|
-|Setup Dataset Module for MoleculeNet (PCBA)||Done|It can use any of the Moleculenet Datasets for classification/regression|
-|Configure Data Modules for SSL splits (labeled/unlabeled)||Done||
-|Implement GNN Models (GCN, GIN)||Done|We can try/implement more architectures|
-|Implement Supervised Baseline LightningModule||Done|Default params not optimized yet|
-|Create Configurable Trainer for Baseline||Done||
-|Implement Hyperparameter Search Framework||In progress||
-|Create Configurable Trainer for Hyperparameter Search Framework||In progress|40%|
-|Implement Mean-Teacher LightningModule||In progress||
-|Implement Configurable Trainer for Mean-Teacher||Not Started||
-|Run Baseline Experiments||Not Started||
-|Run Mean-Teacher Experiments||Not Started||
-|Implement Noisy NCP LightningModule||Not Started||
-|Implement Configurable Trainer for Noisy NCP||Not Started||
-|Run Noisy NCP Experiments||Not Started||
-|Write-up & Analysis||Not Started||
+|  **Task**  |  **Status**  |  **Comments**  |
+|--------|----------|------------|
+|Setup Dataset Module for QM9|Done|Regression task|
+|Setup Dataset Module for MoleculeNet (PCBA)|Done|It can use any of the Moleculenet Datasets for classification/regression|
+|Configure Data Modules for SSL splits (labeled/unlabeled)|Done||
+|Implement GNN Models (GCN, GIN)|Done|We can try/implement more architectures|
+|Implement Supervised Baseline LightningModule|Done|Default params not optimized yet|
+|Create Configurable Trainer for Baseline|Done||
+|Implement Hyperparameter Search Framework|In progress||
+|Create Configurable Trainer for Hyperparameter Search Framework|In progress|40%|
+|Implement Mean-Teacher LightningModule|In progress||
+|Implement Configurable Trainer for Mean-Teacher|Not Started||
+|Run Baseline Experiments|Not Started||
+|Run Mean-Teacher Experiments|Not Started||
+|Implement Noisy NCP LightningModule|Not Started||
+|Implement Configurable Trainer for Noisy NCP|Not Started||
+|Run Noisy NCP Experiments|Not Started||
+|Write-up & Analysis|Not Started||
 
 
 
