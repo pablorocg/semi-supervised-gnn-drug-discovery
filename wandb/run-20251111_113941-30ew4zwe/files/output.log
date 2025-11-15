@@ -1,0 +1,120 @@
+QM9 dataset loaded with 10466 labeled, 94198 unlabeled, 13083 validation, and 13084 test samples.
+Batch sizes: labeled=256, unlabeled=256
+INFO:__main__:Optimizer: SGD, LR: 0.001
+INFO:__main__:Total steps: 4100, Warmup steps: 205, Cosine steps: 3895
+
+  | Name          | Type              | Params | Mode
+------------------------------------------------------------
+0 | loss_fn       | BCEWithLogitsLoss | 0      | train
+1 | train_metrics | MetricCollection  | 0      | train
+2 | val_metrics   | MetricCollection  | 0      | train
+3 | test_metrics  | MetricCollection  | 0      | train
+4 | model         | GCN               | 5.0 K  | train
+5 | ema           | EMA               | 10.0 K | train
+------------------------------------------------------------
+5.0 K     Trainable params
+5.0 K     Non-trainable params
+10.0 K    Total params
+0.040     Total estimated model params size (MB)
+39        Modules in train mode
+0         Modules in eval mode
+Sanity Checking DataLoader 0:   0%|          | 0/2 [00:00<?, ?it/s]
+/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/torch/utils/data/dataloader.py:668: UserWarning: 'pin_memory' argument is set as true but no accelerator is found, then device pinned memory won't be used.
+  warnings.warn(warn_msg)
+/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/pytorch_lightning/trainer/connectors/data_connector.py:377: You have overridden `on_after_batch_transfer` in `LightningModule` but have passed in a `LightningDataModule`. It will use the implementation from `LightningModule` instance.
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/zhome/fd/3/223554/GitHub/semi-supervised-gnn-drug-discovery/src/lightning_modules/mean_teacher.py", line 335, in <module>
+    trainer.fit(baseline_module, datamodule=data_module)
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/pytorch_lightning/trainer/trainer.py", line 560, in fit
+    call._call_and_handle_interrupt(
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/pytorch_lightning/trainer/call.py", line 49, in _call_and_handle_interrupt
+    return trainer_fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/pytorch_lightning/trainer/trainer.py", line 598, in _fit_impl
+    self._run(model, ckpt_path=ckpt_path)
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/pytorch_lightning/trainer/trainer.py", line 1011, in _run
+    results = self._run_stage()
+              ^^^^^^^^^^^^^^^^^
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/pytorch_lightning/trainer/trainer.py", line 1053, in _run_stage
+    self._run_sanity_check()
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/pytorch_lightning/trainer/trainer.py", line 1082, in _run_sanity_check
+    val_loop.run()
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/pytorch_lightning/loops/utilities.py", line 179, in _decorator
+    return loop_run(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/pytorch_lightning/loops/evaluation_loop.py", line 145, in run
+    self._evaluation_step(batch, batch_idx, dataloader_idx, dataloader_iter)
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/pytorch_lightning/loops/evaluation_loop.py", line 437, in _evaluation_step
+    output = call._call_strategy_hook(trainer, hook_name, *step_args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/pytorch_lightning/trainer/call.py", line 329, in _call_strategy_hook
+    output = fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/pytorch_lightning/strategies/strategy.py", line 412, in validation_step
+    return self.lightning_module.validation_step(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/zhome/fd/3/223554/GitHub/semi-supervised-gnn-drug-discovery/src/lightning_modules/mean_teacher.py", line 134, in validation_step
+    self.val_metrics(logits, labels)
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/torchmetrics/collections.py", line 235, in forward
+    return self._compute_and_reduce("forward", *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/torchmetrics/collections.py", line 383, in _compute_and_reduce
+    res = m(*args, **m._filter_kwargs(**kwargs))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/torchmetrics/metric.py", line 315, in forward
+    self._forward_cache = self._forward_reduce_state_update(*args, **kwargs)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/torchmetrics/metric.py", line 384, in _forward_reduce_state_update
+    self.update(*args, **kwargs)
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/torchmetrics/metric.py", line 559, in wrapped_func
+    raise err
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/torchmetrics/metric.py", line 549, in wrapped_func
+    update(*args, **kwargs)
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/torchmetrics/classification/stat_scores.py", line 187, in update
+    _binary_stat_scores_tensor_validation(preds, target, self.multidim_average, self.ignore_index)
+  File "/zhome/fd/3/223554/miniconda3/envs/deep_learning/lib/python3.12/site-packages/torchmetrics/functional/classification/stat_scores.py", line 77, in _binary_stat_scores_tensor_validation
+    raise RuntimeError(
+RuntimeError: Detected the following values in `target`: tensor([ 2.5524,  3.9511,  4.3239,  4.3321,  4.3674,  4.4763,  4.4899,  4.6123,
+         4.6259,  4.6804,  4.6831,  4.6912,  4.7239,  4.7674,  4.7756,  4.8191,
+         4.8844,  4.9361,  4.9416,  5.0395,  5.0776,  5.1130,  5.1185,  5.1293,
+         5.2001,  5.2191,  5.3362,  5.3498,  5.3525,  5.3552,  5.3906,  5.3960,
+         5.4151,  5.4913,  5.5049,  5.5756,  5.6518,  5.6627,  5.6763,  5.6817,
+         5.6926,  5.7008,  5.7117,  5.7144,  5.7171,  5.7198,  5.7253,  5.7579,
+         5.7634,  5.7879,  5.8151,  5.8477,  5.8586,  5.8613,  5.8940,  5.8967,
+         5.9021,  5.9130,  5.9239,  5.9457,  5.9511,  5.9539,  5.9566,  5.9593,
+         5.9756,  5.9838,  6.0137,  6.0192,  6.0300,  6.0382,  6.0409,  6.0464,
+         6.0573,  6.0736,  6.1008,  6.1144,  6.1226,  6.1253,  6.1280,  6.1552,
+         6.1661,  6.1688,  6.1770,  6.1797,  6.2069,  6.2178,  6.2532,  6.2559,
+         6.2668,  6.3158,  6.3375,  6.3403,  6.3511,  6.3593,  6.3620,  6.3811,
+         6.3865,  6.4246,  6.4301,  6.4382,  6.4518,  6.4600,  6.4763,  6.5090,
+         6.5198,  6.5253,  6.5280,  6.5389,  6.5661,  6.5988,  6.6096,  6.6233,
+         6.6668,  6.6722,  6.6750,  6.6804,  6.6886,  6.7130,  6.7239,  6.7294,
+         6.7430,  6.8001,  6.8165,  6.8437,  6.9226,  6.9280,  7.0777,  7.0886,
+         7.0995,  7.1076,  7.1103,  7.1158,  7.1484,  7.1648,  7.1675,  7.1756,
+         7.1811,  7.2273,  7.2654,  7.2981,  7.3008,  7.3090,  7.3389,  7.3743,
+         7.3770,  7.3933,  7.4097,  7.4151,  7.4178,  7.4369,  7.4478,  7.4777,
+         7.4831,  7.5158,  7.5239,  7.5321,  7.5403,  7.5512,  7.5865,  7.5947,
+         7.6083,  7.6192,  7.6246,  7.6355,  7.6437,  7.6546,  7.6627,  7.7280,
+         7.7362,  7.7906,  7.8124,  7.8206,  7.8233,  7.8723,  7.8777,  7.9049,
+         7.9512,  8.0791,  8.0927,  8.1144,  8.1471,  8.2233,  8.2260,  8.2342,
+         8.2723,  8.2859,  8.2886,  8.2913,  8.3185,  8.3430,  8.3485,  8.3757,
+         8.3893,  8.4002,  8.4219,  8.4464,  8.4981,  8.5117,  8.5471,  8.5498,
+         8.5634,  8.5689,  8.5934,  8.6124,  8.6260,  8.6287,  8.6342,  8.6396,
+         8.6532,  8.6641,  8.6668,  8.6913,  8.6940,  8.7349,  8.7512,  8.7539,
+         8.7566,  8.7702,  8.7784,  8.7920,  8.8410,  8.8845,  8.8872,  8.9417,
+         8.9580,  8.9716,  8.9770,  9.0315,  9.0641,  9.1049,  9.1376,  9.1974,
+         9.3063,  9.3199, 10.0628]) but expected only the following values [0, 1].

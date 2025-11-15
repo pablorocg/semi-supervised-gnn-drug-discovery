@@ -8,6 +8,10 @@ from torch.optim import SGD
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torchmetrics import MetricCollection
 
+from ema_pytorch import EMA
+import torch.nn.functional as F
+
+
 from torchmetrics.classification import (
     BinaryAccuracy,
     BinaryAveragePrecision,
@@ -33,6 +37,7 @@ class BaselineModel(L.LightningModule):
         self,
         model: nn.Module,
         num_classes: int,
+        task_type: str = "classification",
         learning_rate: float = 1e-3,
         warmup_epochs: int = 5,
         cosine_period_ratio: float = 1,
@@ -44,12 +49,18 @@ class BaselineModel(L.LightningModule):
         train_transforms: Optional[Callable] = None,
         val_transforms: Optional[Callable] = None,
         test_transforms: Optional[Callable] = None,
+        lambda_consistency: float = 1.0, 
+        ema_decay: float = 0.999,
     ):
         super().__init__()
 
         # Loss function for binary and multi-class classification
         self.loss_fn = (
-            nn.BCEWithLogitsLoss() if num_classes == 1 else nn.CrossEntropyLoss()
+            if task_type = "regression" 
+            self.loss_fn = nn.mse_loss
+            if num_classes == 1
+            self.loss_fn = nn.BCEWithLogitsLoss() 
+            else nn.mse_loss()
         )
 
         # Optimizer and scheduler params
@@ -73,10 +84,14 @@ class BaselineModel(L.LightningModule):
         self.save_hyperparameters(ignore=["model"])
 
         self.model = model
+        self.ema_decay = ema_decay
+        self.lambda_consistency = lambda_consistency
 
         if weights is not None:
             log.info(f"Loading weights from {weights}")
             self.load_weights(weights)
+
+        self.ema = EMA(self.model, beta=self.ema_decay)
 
         self.model = (
             torch.compile(model, mode=compile_mode)
@@ -91,7 +106,20 @@ class BaselineModel(L.LightningModule):
         # Graph classification step for training
         logits = self.model(batch)
         labels = batch.y.view(-1, self.num_classes).float()
-        loss = self.loss_fn(logits, labels)
+        # Supervised loss
+        supervised_loss = self.loss_fn(logits, labels)
+
+        #Teacher forward pass (no grad)
+        with torch.no_grad():
+            teacher_logits = self.ema.ema_model(batch)
+        # Consistency loss
+        lambda_consistency = self.lambda_consistency # weight for consistency loss
+        consistency_loss = F.mse_loss(logits, teacher_logits)
+
+        # Total loss
+        loss = supervised_loss + lambda_consistency * consistency_loss
+
+        # Update metrics with student logits
         self.train_metrics(logits, labels)
         self.log(
             "train/loss",
@@ -103,8 +131,9 @@ class BaselineModel(L.LightningModule):
         )
         return loss
 
+
     def validation_step(self, batch, batch_idx):
-        logits = self.model(batch)
+        logits = self.ema.ema_model(batch)
         labels = batch.y.view(-1, self.num_classes).float()
         loss = self.loss_fn(logits, labels)
         self.val_metrics(logits, labels)
@@ -240,6 +269,10 @@ class BaselineModel(L.LightningModule):
             )
             self.train_metrics.reset()
 
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        # Update EMA weights after each training step
+        self.ema.update()
+
     def on_validation_epoch_end(self):
         if self.val_metrics:
             metrics = self.val_metrics.compute()
@@ -267,8 +300,10 @@ if __name__ == "__main__":
     from src.models.gcn import GCN
     from src.data.qm9 import QM9DataModule
     from src.data.moleculenet import MoleculeNetDataModule
-    from pytorch_lightning.callbacks import TQDMProgressBar
+    from pytorch_lightning.callbacks import TQDMProgressBar, ModelCheckpoint
     from pytorch_lightning import Trainer
+    from pytorch_lightning.loggers import WandbLogger
+    import wandb
 
     # data_module = QM9DataModule(
     #     target=0,
@@ -289,8 +324,34 @@ if __name__ == "__main__":
     baseline_module = BaselineModel(
         model=GCN(num_node_features=data_module.num_features, hidden_channels=64),
         num_classes=data_module.num_classes,
+        lambda_consistency=1.0,
+        ema_decay=0.999,
+    )
+
+    wandb_logger = WandbLogger(
+        project="semi-supervised-gnn",
+        name="mean-teacher-qm9",
+        log_model=True,
+        save_dir="./logs",
+    )
+
+    # Watch the model to log gradients and parameters
+    wandb_logger.watch(baseline_module.model, log="all", log_freq=100)
+
+    # Add checkpoint callback
+    checkpoint_callback = ModelCheckpoint(
+        monitor="val/loss",
+        dirpath="./checkpoints",
+        filename="mean-teacher-qm9-{epoch:02d}-{val/loss:.2f}",
+        save_top_k=3,
+        mode="min",
     )
 
     # Run trainer in debug mode fast_dev_run=True,
-    trainer = Trainer(max_epochs=100, callbacks=[TQDMProgressBar()], logger=False)
+    trainer = Trainer(max_epochs=100,
+     callbacks=[TQDMProgressBar(), checkpoint_callback],
+      logger=wandb_logger,
+      log_every_n_steps=10,
+      enable_progress_bar=True,
+      enable_model_summary=True,)
     trainer.fit(baseline_module, datamodule=data_module)

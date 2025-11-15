@@ -233,7 +233,7 @@ class MoleculeNetDataModule(pl.LightningDataModule):
 
 
 if __name__ == "__main__":
-    dm = MoleculeNetDataModule(num_workers=1)
+    dm = MoleculeNetDataModule(num_workers=8)
     dm.prepare_data()
     dm.setup()
     # train_loader = dm.train_dataloader()

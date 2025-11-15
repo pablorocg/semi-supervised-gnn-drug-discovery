@@ -1,10 +1,8 @@
-ogb
-deepchem
 dotenv
+torch
 torch-geometric
 torch-scatter
 torch-sparse
-torch
 pytorch-lightning
 numpy
 rdkit
@@ -15,4 +13,3 @@ tqdm
 jupyter
 ipykernel
 matplotlib
-seaborn
