@@ -2,6 +2,7 @@ torch==2.9
 hydra-core
 omegaconf
 dotenv
+torch
 torch-geometric
 torch-scatter
 torch-sparse
@@ -12,4 +13,6 @@ scikit-learn
 pandas
 pyyaml
 tqdm
-
+jupyter
+ipykernel
+matplotlib
