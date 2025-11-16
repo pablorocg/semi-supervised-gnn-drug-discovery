@@ -5,10 +5,11 @@ from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger
 from src.data.moleculenet import MoleculeNetDataModule
+from src.data.pcba import OgbgMolPcbaDataModule
 from src.data.qm9 import QM9DataModule
 from src.lightning_modules.baseline import BaselineModule
 from src.utils.path_utils import get_configs_dir
-from src.utils.utils import seed_everything
+from pytorch_lightning import seed_everything
 
 
 @hydra.main(
@@ -22,11 +23,13 @@ def main(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
     
     # Set seed for reproducibility
-    seed_everything(cfg.seed, cfg.force_deterministic)
+    seed_everything(cfg.seed, workers=True)
     
     # Instantiate datamodule based on dataset name
     if cfg.dataset.name == "QM9":
         dm = instantiate(cfg.dataset.init, _target_=QM9DataModule)
+    elif cfg.dataset.name == "ogbg-molpcba":
+        dm = instantiate(cfg.dataset.init, _target_=OgbgMolPcbaDataModule)
     else:
         dm = instantiate(cfg.dataset.init, _target_=MoleculeNetDataModule)
 
@@ -43,9 +46,9 @@ def main(cfg: DictConfig) -> None:
     # Instantiate model with dynamic in_channels and out_channels
     model = instantiate(
         cfg.model.init,
-        _recursive_=False,
-        in_channels=in_channels,
-        out_channels=n_outputs,
+        # _recursive_=False,
+        # in_channels=in_channels,
+        # out_channels=n_outputs,
     )
     
     # Create lightning module
@@ -69,7 +72,7 @@ def main(cfg: DictConfig) -> None:
     
     # Train and test
     trainer.fit(model=lightning_module, datamodule=dm)
-    trainer.test(model=lightning_module, datamodule=dm)
+    # trainer.test(model=lightning_module, datamodule=dm)
 
 
 if __name__ == "__main__":

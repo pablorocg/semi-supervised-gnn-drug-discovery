@@ -1,14 +1,14 @@
 # configs/dataset/qm9.yaml
 
-name: QM9
+name: "moleculenet"
 
 init:
   _target_: src.data.moleculenet.MoleculeNetDataModule
-  target: 0  # Moleculenet targets: 0-127
+  target: null  # Moleculenet targets: 0-127
   batch_size_train: 32
   batch_size_inference: 64
   num_workers: 4
-  splits: [0.6, 0.1, 0.15, 0.15]
+  splits: [0.72, 0.08, 0.1, 0.1]
   seed: 42
   subset_size: null  # Use null for full dataset or int for subset
   data_augmentation: false

@@ -174,7 +174,7 @@ class QM9DataModule(pl.LightningDataModule):
         elif isinstance(self.hparams.target, list):
             return len(self.hparams.target)
         else:
-            return QM9.num_classes
+            return QM9(root=self.data_dir).num_classes
 
     @property
     def task_type(self) -> str:

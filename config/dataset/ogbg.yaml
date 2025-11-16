@@ -1,0 +1,16 @@
+# configs/dataset/qm9.yaml
+
+name: "ogbg-molpcba"
+
+init:
+  _target_: src.data.pcba.OgbgMolPcbaDataModule
+  target: null  
+  batch_size_train: 256
+  batch_size_inference: 256
+  num_workers: 4
+  splits: [0.72, 0.08, 0.1, 0.1]
+  seed: 42
+  subset_size: null # Use null for full dataset or int for subset
+  data_augmentation: false
+  mode: "semisupervised"
+  name: "ogbg-molpcba"  
