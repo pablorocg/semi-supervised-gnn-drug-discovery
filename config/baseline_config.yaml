@@ -1,0 +1,21 @@
+# configs/baseline_config.yaml
+
+defaults:
+  - dataset: qm9  # Options: qm9, moleculenet
+  - model: gin  # Options: gin, gcn, gin_deep, gcn_shallow
+  - lightning_module: baseline
+  - trainer: default
+  - logger: wandb
+  - _self_  
+
+# General settings
+seed: 42
+force_deterministic: false
+
+# Hydra configuration 
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}

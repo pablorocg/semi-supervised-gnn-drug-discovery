@@ -1,17 +1,16 @@
-dataset_name: "moleculenet"
+# configs/dataset/qm9.yaml
 
-num_outputs: 1 
+name: QM9
 
 init:
-  _target_: moleculenet.MoleculeNetDataModule
-  data_augmentation: false
-  name: pcmb
-  target: 2   # choose target property from QM9 dataset (0-18, there is 19 in total)
-  data_dir: ${oc.env.DATA_DIR}
-  batch_size_train: 100
-  batch_size_inference: 2048
+  _target_: src.data.moleculenet.MoleculeNetDataModule
+  target: 0  # Moleculenet targets: 0-127
+  batch_size_train: 32
+  batch_size_inference: 64
   num_workers: 4
-  #splits: [10, 109990, 10000, 10831] # this is just to compare performance to Mikkel's code
-  splits: [0.72, 0.08, 0.1, 0.1] # DEFAULT OPTION: 80% train, 10% validation, 10% test. Of the training data, 90% is for unlabeled and 10% for labeled.
-  seed: 0
-  subset_size: null
+  splits: [0.6, 0.1, 0.15, 0.15]
+  seed: 42
+  subset_size: null  # Use null for full dataset or int for subset
+  data_augmentation: false
+  mode: "semisupervised"
+  name: "pcba"  

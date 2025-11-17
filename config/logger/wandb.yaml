@@ -1,11 +1,16 @@
-defaults:
-  - _self_
+# configs/logger/wandb.yaml
 
-_target_: logger.WandBLogger
-group: ${dataset.dataset_name} # Name of the group for wandb
-name: ${model.name}_seed=${seed} # Name of the run for wandb
-job_type: test
-entity: bnns-for-molecules
-project_name: semi-supervised-ensembles
-disable: false
-local_dir: ./logs #Directory to save logs
+wandb:
+  _target_: pytorch_lightning.loggers.WandbLogger
+  name: "${dataset.name}_${model.name}_${now:%Y-%m-%d_%H-%M-%S}"  
+  project: "molecule-property-prediction"  
+  save_dir: "${oc.env:LOGS_DIR,./logs}" 
+  offline: false
+  log_model: false
+  tags:  
+    - "${dataset.name}"
+    - "${model.name}"
+  notes: "Experiment with ${dataset.name} dataset"  
+
+
+

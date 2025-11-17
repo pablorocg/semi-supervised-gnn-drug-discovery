@@ -1,3 +1,9 @@
+<<<<<<< HEAD
+=======
+torch==2.9
+hydra-core
+omegaconf
+>>>>>>> origin/main
 dotenv
 torch
 torch-geometric
@@ -5,11 +11,15 @@ torch-scatter
 torch-sparse
 pytorch-lightning
 numpy
-rdkit
+torchmetrics
 scikit-learn
 pandas
 pyyaml
 tqdm
+<<<<<<< HEAD
 jupyter
 ipykernel
 matplotlib
+=======
+
+>>>>>>> origin/main

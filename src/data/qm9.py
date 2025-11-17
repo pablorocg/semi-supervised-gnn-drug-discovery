@@ -1,63 +1,68 @@
 import os
-import subprocess
+from pathlib import Path
 
 import numpy as np
 import pytorch_lightning as pl
-import torch
-from torch_geometric.data import Data
+from pytorch_lightning.utilities.combined_loader import CombinedLoader
 from torch_geometric.datasets import QM9
-from torch_geometric.transforms import BaseTransform
+
 from src.utils.dataset_utils import (
     DataLoader,
-    ConvertTargetType,
-    ConvertFeaturesToFloat,
+    GetTarget,
 )
-
-# import Compose for transforming data in torch geometric
-from torch_geometric.transforms import Compose
 from src.utils.path_utils import get_data_dir
-from pathlib import Path
 
 
 class QM9DataModule(pl.LightningDataModule):
+    """
+    DataModule for the QM9 dataset.
+
+    Parameters
+    ----------
+    target : int, optional
+        Index of the target property to predict (0-11), by default 0
+    batch_size_train : int, optional
+        Batch size for training dataloaders, by default 32
+    batch_size_inference : int, optional
+        Batch size for validation and test dataloaders, by default 32
+    num_workers : int, optional
+        Number of workers for data loading, by default 1
+    splits : list of int or float, optional
+        Sizes or proportions for dataset splits: [unlabeled, labeled, val, test], by default [0.72, 0.08, 0.1, 0.1]
+    seed : int, optional
+        Random seed for shuffling and splitting the dataset, by default 0
+    subset_size : int or None, optional
+        If specified, use only a subset of the dataset of this size, by default None
+    data_augmentation : bool, optional
+        Whether to apply data augmentation (not used here), by default False
+    mode : str, optional
+        Mode of operation: "supervised" or "semisupervised", by default "semisupervised"
+    name : str, optional
+        Name of the dataset, by default "qm9"
+    """
+
     def __init__(
         self,
         target: int = 0, # choose target property index from QM9 dataset
         batch_size_train: int = 32,
         batch_size_inference: int = 32,
         num_workers: int = 1,
-        splits: list[int] | list[float] = [0.72, 0.08, 0.1, 0.1],
+        splits: list[int] | list[float] = [
+            0.72,
+            0.08,
+            0.1,
+            0.1,
+        ],  # Unlabeled, labeled, val, test
         seed: int = 0,
         subset_size: int | None = None,
         data_augmentation: bool = False,  # Unused but here for compatibility
+        mode="semisupervised",
         name: str = "qm9",
-        ood: bool = False,
     ) -> None:
         super().__init__()
-        self.target = target
+        self.save_hyperparameters()
 
         self.data_dir = Path(get_data_dir()) / "QM9"
-
-        self.batch_size_train = batch_size_train
-        self.batch_size_inference = batch_size_inference
-        self.num_workers = num_workers
-        self.splits = splits
-        self.seed = seed
-        self.subset_size = subset_size
-        self.data_augmentaion = data_augmentation
-        self.name = name
-        self.ood = ood
-
-        self.data_train_unlabeled = None
-        self.data_train_labeled = None
-        self.data_val = None
-        self.data_test = None
-        self.ood_datasets = None
-
-        self.batch_size_train_labeled = None
-        self.batch_size_train_unlabeled = None
-
-        self.setup()  # Call setup to initialize the datasets
 
     def prepare_data(self) -> None:
         if not os.path.exists(self.data_dir):
@@ -66,29 +71,21 @@ class QM9DataModule(pl.LightningDataModule):
         QM9(root=self.data_dir)
 
     def setup(self, stage: str | None = None) -> None:
-        dataset = QM9(
-            root=self.data_dir,
-            transform=Compose(
-                [
-                    ConvertTargetType(target=self.target, dtype=torch.float),
-                    ConvertFeaturesToFloat(),
-                ]
-            ),
-        )
+        dataset = QM9(root=self.data_dir, transform=GetTarget(self.hparams.target))
 
         # Shuffle dataset
-        rng = np.random.default_rng(seed=self.seed)
+        rng = np.random.default_rng(seed=self.hparams.seed)
         dataset = dataset[rng.permutation(len(dataset))]
 
         # Subset dataset
-        if self.subset_size is not None:
-            dataset = dataset[: self.subset_size]
+        if self.hparams.subset_size is not None:
+            dataset = dataset[: self.hparams.subset_size]
 
         # Split dataset
-        if all([type(split) == int for split in self.splits]):
-            split_sizes = self.splits
-        elif all([type(split) == float for split in self.splits]):
-            split_sizes = [int(len(dataset) * prop) for prop in self.splits]
+        if all(isinstance(split, int) for split in self.hparams.splits):
+            split_sizes = self.hparams.splits
+        elif all(isinstance(split, float) for split in self.hparams.splits):
+            split_sizes = [int(len(dataset) * prop) for prop in self.hparams.splits]
 
         split_idx = np.cumsum(split_sizes)
 
@@ -97,12 +94,8 @@ class QM9DataModule(pl.LightningDataModule):
         self.data_val = dataset[split_idx[1] : split_idx[2]]
         self.data_test = dataset[split_idx[2] :]
 
-        # Set batch sizes. We want the labeled batch size to be the one given by the user, and the unlabeled one to be so that we have the same number of batches
-        self.batch_size_train_labeled = self.batch_size_train
-        self.batch_size_train_unlabeled = self.batch_size_train
-        # self.batch_size_train_unlabeled = int(
-        #    self.batch_size_train * len(self.data_train_unlabeled) / len(self.data_train_labeled)
-        # )
+        self.batch_size_train_labeled = self.hparams.batch_size_train
+        self.batch_size_train_unlabeled = self.hparams.batch_size_train
 
         print(
             f"QM9 dataset loaded with {len(self.data_train_labeled)} labeled, {len(self.data_train_unlabeled)} unlabeled, "
@@ -112,11 +105,29 @@ class QM9DataModule(pl.LightningDataModule):
             f"Batch sizes: labeled={self.batch_size_train_labeled}, unlabeled={self.batch_size_train_unlabeled}"
         )
 
-    def train_dataloader(self, shuffle=True) -> DataLoader:
+    def train_dataloader(self) -> CombinedLoader:
+        if self.hparams.mode == "supervised":
+            return CombinedLoader(
+                {
+                    "labeled": self.supervised_train_dataloader(),
+                },
+                mode="max_size_cycle",
+            )
+
+        elif self.hparams.mode == "semisupervised":
+            return CombinedLoader(
+                {
+                    "labeled": self.supervised_train_dataloader(),
+                    "unlabeled": self.unsupervised_train_dataloader(),
+                },
+                mode="max_size_cycle",
+            )
+
+    def supervised_train_dataloader(self, shuffle=True) -> DataLoader:
         return DataLoader(
             self.data_train_labeled,
             batch_size=self.batch_size_train_labeled,
-            num_workers=self.num_workers,
+            num_workers=self.hparams.num_workers,
             shuffle=shuffle,
             pin_memory=True,
             persistent_workers=True,
@@ -126,7 +137,7 @@ class QM9DataModule(pl.LightningDataModule):
         return DataLoader(
             self.data_train_unlabeled,
             batch_size=self.batch_size_train_unlabeled,
-            num_workers=self.num_workers,
+            num_workers=self.hparams.num_workers,
             shuffle=shuffle,
             pin_memory=True,
             persistent_workers=True,
@@ -135,8 +146,8 @@ class QM9DataModule(pl.LightningDataModule):
     def val_dataloader(self) -> DataLoader:
         return DataLoader(
             self.data_val,
-            batch_size=self.batch_size_inference,
-            num_workers=self.num_workers,
+            batch_size=self.hparams.batch_size_inference,
+            num_workers=self.hparams.num_workers,
             shuffle=False,
             pin_memory=True,
             persistent_workers=True,
@@ -145,54 +156,25 @@ class QM9DataModule(pl.LightningDataModule):
     def test_dataloader(self) -> DataLoader:
         return DataLoader(
             self.data_test,
-            batch_size=self.batch_size_inference,
-            num_workers=self.num_workers,
+            batch_size=self.hparams.batch_size_inference,
+            num_workers=self.hparams.num_workers,
             shuffle=False,
             pin_memory=True,
             persistent_workers=True,
         )
-
-    def ood_dataloaders(self) -> dict[str, DataLoader]:
-        return {
-            dataset_name: DataLoader(
-                dataset,
-                batch_size=self.batch_size_inference,
-                num_workers=self.num_workers,
-                shuffle=False,
-                pin_memory=True,
-                persistent_workers=True,
-            )
-            for dataset_name, dataset in self.ood_datasets.items()
-        }
-
-    def ood_dataloader(self) -> list[DataLoader]:
-        """Returns a list of DataLoader for each OOD dataset."""
-        if self.ood_datasets is None:
-            return [], []
-        else:
-            ood_dataloaders = []
-            ood_names = []
-            # for dm in self.ood_datasets:
-            for dataset_name, dataset in self.ood_datasets.items():
-                val_dataloader = DataLoader(
-                    dataset,
-                    batch_size=self.batch_size_inference,
-                    num_workers=self.num_workers,
-                    shuffle=False,
-                    pin_memory=True,
-                    persistent_workers=True,
-                )
-                ood_dataloaders.append(val_dataloader)
-                ood_names.append(dataset_name)
-            return ood_names, ood_dataloaders
 
     @property
     def num_features(self) -> int:
         return self.data_train_labeled.num_node_features
 
     @property
-    def num_classes(self) -> int:
-        return 1  # QM9 is a regression task
+    def num_tasks(self) -> int:
+        if isinstance(self.hparams.target, int):
+            return 1
+        elif isinstance(self.hparams.target, list):
+            return len(self.hparams.target)
+        else:
+            return QM9.num_classes
 
     @property
     def task_type(self) -> str:
@@ -200,16 +182,36 @@ class QM9DataModule(pl.LightningDataModule):
 
 
 if __name__ == "__main__":
-    dm = QM9DataModule()
+    dm = QM9DataModule(
+        target=range(12),  # All 12 regression targets
+        batch_size_train=256,
+        batch_size_inference=256,
+        num_workers=4,
+        splits=[0.7, 0.1, 0.15, 0.05],  # Unlabeled, Labeled, Train, Val, Test
+        seed=42,
+        subset_size=10000,
+        data_augmentation=False,
+        mode="semisupervised",
+        name="qm9",
+    )
 
-    dm.prepare_data()
     dm.setup()
+    dl = dm.train_dataloader()
+    
+    for batch, batch_idx, dataloader_idx in dl:
+        print(
+            f"""
+            Batch idx: {batch_idx}, 
+            Dataloader idx: {dataloader_idx}, 
+            Labeled batch size: {batch["labeled"].num_graphs} 
+            Unlabeled batch size: {batch["unlabeled"].num_graphs}
 
-    print("Preparing data...")
-    print(dm.num_features)
-    print(dm.num_classes)
+            Labels in labeled batch: {batch["labeled"].y.squeeze()}
+            """
+        )
+        if batch_idx == 5:
+            break
 
-    train_loader = dm.train_dataloader()
-    for batch in train_loader:
-        print(batch)
-        break
+    
+    _ = iter(dl)
+    print(f"Len dataloader: {len(dl)} batches")
