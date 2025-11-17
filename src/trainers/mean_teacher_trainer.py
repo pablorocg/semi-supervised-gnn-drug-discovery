@@ -1,39 +1,76 @@
+import hydra
+import torch
+from hydra.utils import instantiate
+from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import TQDMProgressBar
 from pytorch_lightning.loggers import WandbLogger
-
+from src.data.moleculenet import MoleculeNetDataModule
 from src.data.qm9 import QM9DataModule
-from src.models.gcn import GCN
-from src.utils.path_utils import get_logs_dir
-from src.lightning_modules.mean_teacher import MeanTeacherRegressionModel
+from src.lightning_modules.baseline import BaselineModule
+from src.utils.path_utils import get_configs_dir
+from pytorch_lightning import seed_everything
 
 
-@hydra.main(config_path="../../config/dataset", config_name="qm9")
-def main(cfg):
+@hydra.main(
+    config_path=get_configs_dir(),
+    config_name="baseline_config.yaml",  
+    version_base="1.1",
+)
+def main(cfg: DictConfig) -> None:
+    """Main training pipeline."""
+    # Print full config
+    print(OmegaConf.to_yaml(cfg))
+    
+    # Set seed for reproducibility
+    seed_everything(cfg.seed, workers=True)
+    
+    # Instantiate datamodule based on dataset name
+    if cfg.dataset.name == "QM9":
+        dm = instantiate(cfg.dataset.init, _target_=QM9DataModule)
+    else:
+        dm = instantiate(cfg.dataset.init, _target_=MoleculeNetDataModule)
 
+    
+    dm.setup('fit')
 
+    # Get dataset properties
+    n_outputs = dm.num_tasks
+    task_type = dm.task_type
+    in_channels = dm.num_features
 
-    data_module = QM9DataModule(
-        target=0,
-        batch_size_train=32,
-        batch_size_inference=32,
-        num_workers=4,
+    print(f"Number of input features: {in_channels}, type of task: {task_type}, number of outputs: {n_outputs}")
+    
+    # Instantiate model with dynamic in_channels and out_channels
+    model = instantiate(
+        cfg.model.init,
+        _recursive_=False,
+        in_channels=in_channels,
+        out_channels=n_outputs,
     )
+    
+    # Create lightning module
+    lightning_module = instantiate(
+        cfg.lightning_module.init,
+        _target_=BaselineModule,
+        model=model,
+        num_outputs=n_outputs,
+        task_type=task_type,
+    )
+    
+    # Setup logger
+    logger = instantiate(cfg.logger.wandb, _target_=WandbLogger)
+    
+    # Instantiate trainer
+    trainer = instantiate(
+        cfg.trainer.init,
+        _target_=Trainer,
+        logger=logger,
+    )
+    
+    # Train and test
+    trainer.fit(model=lightning_module, datamodule=dm)
+    trainer.test(model=lightning_module, datamodule=dm)
 
-# data_module.prepare_data()
-data_module.setup()
 
-baseline_module = MeanTeacherRegressionModel(
-    model=GCN(num_node_features=data_module.num_features, hidden_channels=128),
-    num_outputs=data_module.num_classes,
-)
-
-# Run trainer in debug mode fast_dev_run=True,
-trainer = Trainer(
-    max_epochs=10,
-    callbacks=[
-        TQDMProgressBar(),
-    ],
-    logger=WandbLogger(name="drug_discovery_regression", save_dir=get_logs_dir()),
-)
-trainer.fit(baseline_module, datamodule=data_module)
+if __name__ == "__main__":
+    main()

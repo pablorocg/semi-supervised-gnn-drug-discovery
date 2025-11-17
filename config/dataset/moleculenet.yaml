@@ -1,9 +1,23 @@
-dataset_name: "moleculenet"
+# configs/dataset/qm9.yaml
 
-num_outputs: 1 
+name: "moleculenet"
 
 init:
+<<<<<<< HEAD
   _target_: moleculenet.MoleculeNetDataModule
   data_augmentation: false
   mode: "supervised"
   name: "tox21"  
+=======
+  _target_: src.data.moleculenet.MoleculeNetDataModule
+  target: null  # Moleculenet targets: 0-127
+  batch_size_train: 32
+  batch_size_inference: 64
+  num_workers: 4
+  splits: [0.72, 0.08, 0.1, 0.1]
+  seed: 42
+  subset_size: null  # Use null for full dataset or int for subset
+  data_augmentation: false
+  mode: "semisupervised"
+  name: "pcba"  
+>>>>>>> main

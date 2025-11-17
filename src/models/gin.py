@@ -1,10 +1,16 @@
 import torch
+from torch import nn
 from torch_geometric.nn import MLP, GINConv, global_add_pool
 
 
 class GIN(torch.nn.Module):
     def __init__(
-        self, in_channels: int, hidden_channels: int, out_channels: int, num_layers: int
+        self,
+        in_channels: int,
+        hidden_channels: int,
+        out_channels: int,
+        num_layers: int,
+        dropout: float = 0.5,
     ):
         super().__init__()
 
@@ -15,8 +21,12 @@ class GIN(torch.nn.Module):
             in_channels = hidden_channels
 
         self.mlp = MLP(
-            [hidden_channels, hidden_channels, out_channels], norm=None, dropout=0.5
+            [hidden_channels, hidden_channels, out_channels],
+            norm="batch_norm",
+            dropout=dropout,
         )
+
+        self.gelu = nn.GELU()
 
     def forward(self, data):
         x, edge_index, batch, batch_size = (
@@ -25,15 +35,20 @@ class GIN(torch.nn.Module):
             data.batch,
             data.num_graphs,
         )
+
         for conv in self.convs:
-            x = conv(x, edge_index).relu()
-        # Pass the batch size to avoid CPU communication/graph breaks:
-        x = global_add_pool(x, batch, size=batch_size)
-        return self.mlp(x)
+            x = conv(x, edge_index)
+            x = self.gelu(x)
+
+        x = global_add_pool(x, batch, size=batch_size)  # [batch_size, hidden_channels]
+
+        x = self.mlp(x)  # [batch_size, out_channels]
+        return x
+
 
 if __name__ == "__main__":
     # Simple test
-    from torch_geometric.data import Data, Batch
+    from torch_geometric.data import Batch, Data
 
     # Create a batch of 2 simple graphs
     data1 = Data(

@@ -1,51 +1,61 @@
-from hydra.utils import instantiate
-from src.data.moleculenet import MoleculeNetDataModule
-from src.data.qm9 import QM9DataModule
-from src.lightning_modules.baseline import BaselineModule
-
-
-
-
-from itertools import chain
 import hydra
 import torch
-from omegaconf import OmegaConf
-
-from src.utils.utils import seed_everything
+from hydra.utils import instantiate
+from omegaconf import DictConfig, OmegaConf
+from pytorch_lightning import Trainer
+from pytorch_lightning.loggers import WandbLogger
+from src.data.moleculenet import MoleculeNetDataModule
+from src.data.pcba import OgbgMolPcbaDataModule
+from src.data.qm9 import QM9DataModule
+from src.lightning_modules.baseline import BaselineModule
 from src.utils.path_utils import get_configs_dir
+from pytorch_lightning import seed_everything
 
 
 @hydra.main(
     config_path=get_configs_dir(),
     config_name="baseline_config.yaml",
-    version_base=None,
+    version_base="1.3",
 )
-def main(cfg):
-    # print out the full config
+def main(cfg: DictConfig) -> None:
+    """Main training pipeline."""
+    # Print full config
     print(OmegaConf.to_yaml(cfg))
 
-    seed_everything(cfg.seed, cfg.force_deterministic)
+    # Set seed for reproducibility
+    seed_everything(cfg.seed, workers=True)
 
+    # Instantiate datamodule based on dataset name
+    if cfg.dataset.name == "QM9":
+        dm = instantiate(cfg.dataset.init, _target_=QM9DataModule)
+    elif cfg.dataset.name == "ogbg-molpcba":
+        dm = instantiate(cfg.dataset.init, _target_=OgbgMolPcbaDataModule)
+    else:
+        dm = instantiate(cfg.dataset.init, _target_=MoleculeNetDataModule)
 
-    # Create an instance of the wandblogger and initialize it
-    
-    # logger = hydra.utils.instantiate(cfg.logger)
-    # hparams = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
-    # logger.init_run(hparams)
+    dm.setup("fit")
 
     # Get dataset properties
     n_outputs = dm.num_tasks
     task_type = dm.task_type
     in_channels = dm.num_features
+<<<<<<< HEAD
     
+=======
+>>>>>>> main
 
-    # model = hydra.utils.instantiate(cfg.model.init)
+    print(
+        f"Number of input features: {in_channels}, type of task: {task_type}, number of outputs: {n_outputs}"
+    )
 
     # Instantiate model
     model = instantiate(
         cfg.model.init,
+<<<<<<< HEAD
         in_channels=in_channels,
         out_channels=n_outputs,
+=======
+>>>>>>> main
     )
 
     # Create lightning module
@@ -55,9 +65,25 @@ def main(cfg):
         model=model,
         num_outputs=n_outputs,
         task_type=task_type,
+<<<<<<< HEAD
   
+=======
+>>>>>>> main
     )
 
+    # Setup logger
+    logger = instantiate(cfg.logger.wandb, _target_=WandbLogger)
+
+    # Instantiate trainer
+    trainer = instantiate(
+        cfg.trainer.init,
+        _target_=Trainer,
+        logger=logger,
+    )
+
+    # Train and test
+    trainer.fit(model=lightning_module, datamodule=dm)
+    # trainer.test(model=lightning_module, datamodule=dm)
 
 
 if __name__ == "__main__":

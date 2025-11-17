@@ -1,0 +1,9 @@
+# configs/model/gin_deep.yaml
+
+name: "GIN"
+
+init:
+  _target_: src.models.gin.GIN
+  _recursive_: false
+  hidden_channels: 256
+  num_layers: 4  

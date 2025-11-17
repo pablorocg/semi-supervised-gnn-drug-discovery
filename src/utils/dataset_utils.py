@@ -22,73 +22,27 @@ import torch
 from torch_geometric.data import Data
 from torch_geometric.transforms import BaseTransform
 
+
 class GetTarget(BaseTransform):
-    def __init__(self, target: int | None = None) -> None:
-        self.target = [target]
-
-    def forward(self, data: Data) -> Data:
-        if self.target is not None:
-            data.y = data.y[:, self.target]
-        return data
-    
-    
-class ConvertTargetType(BaseTransform):
     """
-    A transform to select a target column (if specified)
-    and convert the target tensor 'y' to a specific dtype.
+    A transform to select a target column, a set of columns or all columns as target.
+    If no target is specified, the entire 'y' tensor is kept.
+
+    Args:
+        target (int | list[int] | None, optional): The index or list of indices
+            of the target column(s) to select. If None, the entire 'data.y'
+            tensor is kept. Defaults to None.
     """
 
-    def __init__(self, target: int | None = None, dtype: torch.dtype = torch.float):
-        """
-        Args:
-            target (int | None, optional): The index of the target column
-                to select. If None, the entire 'data.y' tensor is converted.
-                Defaults to None.
-            dtype (torch.dtype, optional): The desired data type
-                (e.g., torch.long, torch.float). Defaults to torch.float.
-        """
+    def __init__(self, target: int | list[int] | None = None) -> None:
         super().__init__()
         self.target = target
-        self.dtype = dtype
 
     def forward(self, data: Data) -> Data:
-        # Check if a specific target column is requested
         if self.target is not None:
-            # Select the column and convert its type
-            data.y = data.y[:, [self.target]].to(self.dtype)
-        else:
-            # Convert the entire 'y' tensor
-            data.y = data.y.to(self.dtype)
+            target = [self.target] if isinstance(self.target, int) else self.target
+            data.y = data.y[:, target]
         return data
-
-
-class ConvertFeaturesToFloat(BaseTransform):
-    """Converts node features 'x' to torch.float."""
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, data: Data) -> Data:
-        if data.x.dtype != torch.float:
-            data.x = data.x.float()
-        return data
-
-
-class TwoAugmentationsTransform(BaseTransform):
-    """Creates two augmented versions of the input data object."""
-    def __init__(self, transform: BaseTransform):
-        super().__init__()
-        self.transform = transform
-
-    def forward(self, data: Data) -> tuple[Data, Data]:
-        data1 = self.transform(data)
-        data2 = self.transform(data)
-        return data1, data2
-
-
-
-
-
-
 
 class Collater:
     def __init__(

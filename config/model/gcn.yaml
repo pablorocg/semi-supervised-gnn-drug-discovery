@@ -1,10 +1,13 @@
-defaults:
-  - _self_
+# configs/model/gcn.yaml
 
-name: gcn
+name: "GCN"
 
 init:
   _target_: src.models.gcn.GCN
   _recursive_: false
+<<<<<<< HEAD
   hidden_channels: 256
+=======
+  hidden_channels: 128
+>>>>>>> main
   num_layers: 4

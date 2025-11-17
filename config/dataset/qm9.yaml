@@ -1,12 +1,13 @@
-dataset_name: "qm9"
+# configs/dataset/qm9.yaml
 
-num_outputs: 1 
+name: QM9
 
 init:
   _target_: src.data.qm9.QM9DataModule
   target: null  # Use null for all targets or specify a target index (0-12)
   batch_size_train: 32
   batch_size_inference: 64
+<<<<<<< HEAD
   num_workers: 4
   splits: [0.72, 0.08, 0.1, 0.1]
   seed: 42
@@ -17,10 +18,15 @@ init:
   data_dir: ${oc.env.DATA_DIR}
   batch_size_train: 100
   batch_size_inference: 2048
+=======
+>>>>>>> main
   num_workers: 4
-  splits: [0.72, 0.08, 0.1, 0.1] # DEFAULT OPTION: 80% train, 10% validation, 10% test. Of the training data, 90% is for unlabeled and 10% for labeled.
-  seed: 0
-  subset_size: null
+  splits: [0.72, 0.08, 0.1, 0.1]
+  seed: 42
+  subset_size: null  # Use null for full dataset or int for subset
+  data_augmentation: false
+  mode: "semisupervised"
+  name: "QM9"
   
 
 
