@@ -108,7 +108,7 @@ class BaselineModule(L.LightningModule):
             on_epoch=True,
             batch_size=labeled.num_graphs,
         )
-        print(f"Train Step {batch_idx}, Loss: {loss.item()}")
+        # print(f"Train Step {batch_idx}, Loss: {loss.item()}")
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -269,7 +269,7 @@ class BaselineModule(L.LightningModule):
     def load_weights(self, weights_path: str):
         """Load pretrained weights into both student and teacher models."""
         state_dict = torch.load(weights_path, map_location="cpu")
-        self.student_model.load_state_dict(state_dict)
+        self.model.load_state_dict(state_dict)
         log.info(f"Weights loaded from {weights_path}")
 
 
@@ -280,6 +280,7 @@ if __name__ == "__main__":
     from src.data.qm9 import QM9DataModule
     from src.models.gcn import GCN
     from src.models.gin import GIN
+    from src.models.RGG import RGG
 
     data_module = QM9DataModule(
         batch_size_train=128,
@@ -288,7 +289,7 @@ if __name__ == "__main__":
         target=0,
     )
 
-    model_name = "GIN"
+    model_name = "RGG"
 
     if model_name == "GIN":
         model = GIN(
@@ -297,11 +298,31 @@ if __name__ == "__main__":
             out_channels=1,
             num_layers=5,
         )
-    else:
+    elif model_name == "GCN":
         model = GCN(
             num_node_features=11,
             hidden_channels=128,
         )
+    elif model_name == "RGG":
+        model = RGG(
+            in_channels=11,
+            hidden_channels=64,
+            out_channels=1,
+            num_layers=4,
+        )
+    else:
+        raise ValueError(f"Unknown model name: {model_name}")
+
+    # Create baseline module
+    baseline_model = BaselineModule(
+        model=model,
+        num_outputs=1,
+        learning_rate=0.01,
+        task_type="classification",
+        compile=True,
+        warmup_epochs=5,
+    )
+
 
     # mean_teacher_model = MeanTeacherRegressionModel(
     #     model=model,
@@ -319,4 +340,5 @@ if __name__ == "__main__":
         logger=WandbLogger(project="mean-teacher-graph-regression"),
     )
 
-    # trainer.fit(model=mean_teacher_model, datamodule=data_module)
+    trainer.fit(model=baseline_model, datamodule=data_module)
+    trainer.test(model=baseline_model, datamodule=data_module)
