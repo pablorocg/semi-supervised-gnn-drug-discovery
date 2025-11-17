@@ -33,14 +33,30 @@ def main(cfg):
     # hparams = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
     # logger.init_run(hparams)
 
-    # dm = hydra.utils.instantiate(cfg.dataset.init)
+    # Get dataset properties
+    n_outputs = dm.num_tasks
+    task_type = dm.task_type
+    in_channels = dm.num_features
+    
 
     # model = hydra.utils.instantiate(cfg.model.init)
 
-    # trainer = hydra.utils.instantiate(cfg.trainer.init, models=models, logger=logger, datamodule=dm, device=device)
+    # Instantiate model
+    model = instantiate(
+        cfg.model.init,
+        in_channels=in_channels,
+        out_channels=n_outputs,
+    )
 
-    # results = trainer.train(**cfg.trainer.train)
-    # results = torch.Tensor(results)
+    # Create lightning module
+    lightning_module = instantiate(
+        cfg.lightning_module.init,
+        _target_=BaselineModule,
+        model=model,
+        num_outputs=n_outputs,
+        task_type=task_type,
+  
+    )
 
 
 

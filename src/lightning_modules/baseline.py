@@ -44,6 +44,7 @@ class BaselineModule(L.LightningModule):
         momentum: float = 0.99,
         augmentations: bool = True,
         task_type: str = "regression",
+       
     ):
         """
         Mean Teacher model for graph regression with semi-supervised learning.

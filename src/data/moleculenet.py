@@ -64,73 +64,54 @@ class MoleculeNetDataModule(pl.LightningDataModule):
             transform=None,  # Load raw data first
         )
 
-        rng = np.random.default_rng(seed=self.seed)
-        all_indices = rng.permutation(len(dataset))
-
-        # 2. Build the nan_mask from the raw data.y, checking the specific target
-        # This is slow, but necessary for this splitting logic
-        all_labels_raw = torch.tensor([dataset[i].y[0, self.target] for i in all_indices])
-        nan_mask = torch.isnan(all_labels_raw).squeeze().tolist()
-
-        # 3. Split indices based on the *raw* NaN values
-        valid_indices = [i for i, is_nan in zip(all_indices, nan_mask) if not is_nan]
-        nan_indices = [i for i, is_nan in zip(all_indices, nan_mask) if is_nan]
-
-        # 4. Create subsets from the raw dataset
-        self.data_train_unlabeled = dataset[nan_indices]
-        valid_dataset = dataset[valid_indices]
-
-        if self.subset_size is not None:
-            # Note: This subsets the valid data, not the whole dataset
-            valid_dataset = valid_dataset[: self.subset_size]
-
-        # --- Your original splitting logic for valid_dataset ---
-        # (This splits the `valid_dataset` into train/val/test)
-        valid_splits = np.array(self.splits[1:])  # Assumes splits[0] is not used here
-        valid_props = valid_splits / valid_splits.sum()
-
-        split_sizes = [int(len(valid_dataset) * prop) for prop in valid_props]
-        # Ensure splits cover the whole dataset
-        split_sizes[-1] = len(valid_dataset) - sum(split_sizes[:-1])
+        # Shuffle dataset
+        rng = np.random.default_rng(seed=self.hparams.seed)
+        dataset = dataset[rng.permutation(len(dataset))]
         
+        # Subset dataset
+        if self.hparams.subset_size is not None:
+            dataset = dataset[: self.hparams.subset_size]
+
+        # Split dataset
+        if all([isinstance(split, int) for split in self.hparams.splits]):
+            split_sizes = self.hparams.splits
+        elif all([isinstance(split, float) for split in self.hparams.splits]):
+            split_sizes = [int(len(dataset) * prop) for prop in self.hparams.splits]
+
         split_idx = np.cumsum(split_sizes)
 
-        self.data_train_labeled = valid_dataset[: split_idx[0]]
-        self.data_val = valid_dataset[split_idx[0] : split_idx[1]]
-        self.data_test = valid_dataset[split_idx[1] :]
-        # --- End of splitting logic ---
+        self.data_train_labeled = dataset[split_idx[0] : split_idx[1]]
 
-        # 5. Now, assign the correct transforms to the *final* datasets
+        if self.hparams.mode == "semisupervised":
+            self.data_train_unlabeled = dataset[: split_idx[0]]
         
-        # Unlabeled data only needs features converted
-        self.data_train_unlabeled.transform = ConvertFeaturesToFloat()
+        self.data_val = dataset[split_idx[1] : split_idx[2]]
+        self.data_test = dataset[split_idx[2] :]
 
-        # Labeled, validation, and test data need both transforms
-        labeled_transform = Compose(
-            [
-                ConvertTargetType(target=self.target, dtype=torch.long),
-                ConvertFeaturesToFloat(),
-            ]
-        )
+        self.batch_size_train_labeled = self.hparams.batch_size_train
+        self.batch_size_train_unlabeled = self.hparams.batch_size_train
         
-        self.data_train_labeled.transform = labeled_transform
-        self.data_val.transform = labeled_transform
-        self.data_test.transform = labeled_transform
-
-        # --- Set batch sizes and print info ---
-        self.batch_size_train_labeled = self.batch_size_train
-        self.batch_size_train_unlabeled = self.batch_size_train
-        # self.batch_size_train_unlabeled = int(
-        #    self.batch_size_train * len(self.data_train_unlabeled) / len(self.data_train_labeled)
-        # )
-
-        print(
-            f"{self.name} dataset loaded with {len(self.data_train_labeled)} labeled, {len(self.data_train_unlabeled)} unlabeled, "
-            f"{len(self.data_val)} validation, and {len(self.data_test)} test samples."
-        )
-        print(
-            f"Batch sizes: labeled={self.batch_size_train_labeled}, unlabeled={self.batch_size_train_unlabeled}"
-        )
+        
+        self.print_dataset_info()
+    def print_dataset_info(self) -> None:
+        if self.hparams.mode == "supervised":
+            print("Using supervised mode.")
+            print(
+                f"Moleculenet {self.hparams.name} dataset loaded with {len(self.data_train_labeled)} labeled, "
+                f"{len(self.data_val)} validation, and {len(self.data_test)} test samples."
+            )
+            print(
+                f"Batch sizes: labeled={self.batch_size_train_labeled}"
+            )
+        elif self.hparams.mode == "semisupervised":
+            print("Using semi-supervised mode.")
+            print(
+                f"Moleculenet {self.hparams.name} dataset loaded with {len(self.data_train_labeled)} labeled, "
+                f"{len(self.data_train_unlabeled)} unlabeled, {len(self.data_val)} validation, and {len(self.data_test)} test samples."
+            )
+            print(
+                f"Batch sizes: labeled={self.batch_size_train_labeled}, unlabeled={self.batch_size_train_unlabeled}"
+            )
 
     def compute_class_stats(self) -> dict[str, float]:
         labels = torch.tensor([

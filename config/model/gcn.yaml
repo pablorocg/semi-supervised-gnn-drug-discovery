@@ -4,6 +4,7 @@ defaults:
 name: gcn
 
 init:
-  _target_: models.GCN
-  _partial_: false
-  num_node_features: 11
+  _target_: src.models.gcn.GCN
+  _recursive_: false
+  hidden_channels: 256
+  num_layers: 4
