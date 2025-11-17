@@ -366,15 +366,15 @@ class GNN_node_Virtualnode(torch.nn.Module):
 class GNN(torch.nn.Module):
     def __init__(
         self,
-        num_tasks,
-        num_layer=5,
-        emb_dim=300,
-        gnn_type="gin",
-        virtual_node=True,
-        residual=False,
-        drop_ratio=0.5,
-        JK="last",
-        graph_pooling="mean",
+        num_tasks: int,
+        num_layer: int = 5,
+        emb_dim: int = 300,
+        gnn_type: str = "gin",
+        virtual_node: bool = True,
+        residual: bool = False,
+        drop_ratio: bool = 0.5,
+        JK: str = "last",
+        graph_pooling: str = "mean",
     ):
         """
         num_tasks (int): number of labels to be predicted

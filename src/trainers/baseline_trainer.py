@@ -49,6 +49,7 @@ def main(cfg: DictConfig) -> None:
         # _recursive_=False,
         # in_channels=in_channels,
         # out_channels=n_outputs,
+        num_tasks=n_outputs# 19
     )
     
     # Create lightning module

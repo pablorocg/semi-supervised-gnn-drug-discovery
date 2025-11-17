@@ -8,11 +8,10 @@ from torch_geometric.data import Data
 from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr
 from torch_geometric.data.storage import GlobalStorage
 from torch_geometric.loader import DataLoader
+
 from src.utils.dataset_utils import (
-    DataLoader,
     GetTarget,
 )
-from src.utils.path_utils import get_data_dir
 from src.utils.path_utils import get_data_dir
 
 PYG_SAFE_GLOBALS = [Data, DataEdgeAttr, DataTensorAttr, GlobalStorage]
@@ -148,7 +147,12 @@ class OgbgMolPcbaDataModule(pl.LightningDataModule):
 
     @property
     def num_tasks(self) -> int:
-        return self.dataset.num_classes
+        if isinstance(self.hparams.target, int):
+            return 1
+        elif isinstance(self.hparams.target, list):
+            return len(self.hparams.target)
+        else:
+            return self.dataset.num_tasks
 
     @property
     def task_type(self) -> str:
