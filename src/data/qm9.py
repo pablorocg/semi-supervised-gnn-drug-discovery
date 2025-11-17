@@ -43,7 +43,7 @@ class QM9DataModule(pl.LightningDataModule):
 
     def __init__(
         self,
-        target: int = 0,
+        target: int | None = 0,
         batch_size_train: int = 32,
         batch_size_inference: int = 32,
         num_workers: int = 1,

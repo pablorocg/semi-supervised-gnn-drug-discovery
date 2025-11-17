@@ -15,7 +15,7 @@ from pytorch_lightning import seed_everything
 @hydra.main(
     config_path=get_configs_dir(),
     config_name="baseline_config.yaml",  
-    version_base="1.1",
+    version_base="1.3",
 )
 def main(cfg: DictConfig) -> None:
     """Main training pipeline."""
@@ -41,16 +41,23 @@ def main(cfg: DictConfig) -> None:
     task_type = dm.task_type
     in_channels = dm.num_features
 
+
+
     print(f"Number of input features: {in_channels}, type of task: {task_type}, number of outputs: {n_outputs}")
     
-    # Instantiate model with dynamic in_channels and out_channels
+    print(cfg.model.init)
+    # Instantiate model
     model = instantiate(
         cfg.model.init,
         # _recursive_=False,
         # in_channels=in_channels,
         # out_channels=n_outputs,
-        num_tasks=n_outputs# 19
+        # num_tasks=n_outputs
     )
+    print(cfg.lightning_module.init)
+    # Print BaselineModule init params
+    print(BaselineModule.__init__.__annotations__)
+
     
     # Create lightning module
     lightning_module = instantiate(
