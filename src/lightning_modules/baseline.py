@@ -7,23 +7,15 @@ from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 from torch.optim import SGD
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torchmetrics import MetricCollection
-from torchmetrics.classification import (
-    BinaryAUROC,
-    BinaryAveragePrecision,
-    BinaryF1Score,
-    BinaryPrecision,
-    BinaryRecall,
-    MulticlassAccuracy,
-    MulticlassAUROC,
-    MulticlassF1Score,
-    MulticlassPrecision,
-    MulticlassRecall,
+
+from src.utils.ogb_metrics import (
+    MultiTaskAccuracy,
+    MultiTaskAP,
+    MultiTaskRMSE,
+    MultiTaskROCAUC,
+    SetF1Score,
 )
-from torchmetrics.regression import (
-    MeanAbsoluteError,
-    MeanSquaredError,
-    R2Score,
-)
+
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -88,7 +80,7 @@ class BaselineModule(L.LightningModule):
         elif task == "classification" and n_outputs == 1:
             return BCEWithLogitsLoss()
         elif task == "classification" and n_outputs > 1:
-            return CrossEntropyLoss()
+            return BCEWithLogitsLoss(reduction="mean")
         else:
             raise ValueError(f"Unsupported task type: {task}")
 
@@ -97,17 +89,17 @@ class BaselineModule(L.LightningModule):
 
     def training_step(self, batch, batch_idx):
         labeled = batch["labeled"]
-
-        logits = self(labeled)  # [BL, C]
-
-        # Ensure labels are correct shape for loss (e.g., [BL, 1])
+        logits = self(labeled)
         labels = labeled.y
-        if self.hparams.num_outputs == 1 and labels.dim() == 1:
-            labels = labels.view(-1, 1)
 
-        loss = self.loss_fn(logits, labels)
+        # Mask out NaN labels BEFORE calculating loss
+        is_valid = (logits == logits) & (labels == labels)
+        valid_logits = logits[is_valid]
+        valid_labels = labels[is_valid].float()
+        loss = self.loss_fn(valid_logits, valid_labels)
 
-        self.train_metrics(logits, labels)  # [BL, C]
+        # Update metrics
+        self.train_metrics.update(logits, labels)
 
         self.log(
             "train/loss",
@@ -116,40 +108,48 @@ class BaselineModule(L.LightningModule):
             on_epoch=True,
             batch_size=labeled.num_graphs,
         )
-
+        print(f"Train Step {batch_idx}, Loss: {loss.item()}")
         return loss
 
     def validation_step(self, batch, batch_idx):
         with torch.inference_mode():
-            logits = self(batch)
+            logits = self(batch)  # [batch_size, num_tasks]
+        labels = batch.y  # [batch_size, num_tasks]
 
-        labels = batch.y
-        if self.hparams.num_outputs == 1 and labels.dim() == 1:
-            labels = labels.view(-1, 1)  # Ensure [B, 1]
+        # Mask out NaN labels BEFORE calculating loss
+        is_valid = (logits == logits) & (labels == labels)
+        valid_logits = logits[is_valid]
+        valid_labels = labels[is_valid].float()
+        loss = self.loss_fn(valid_logits, valid_labels)
 
-        loss = self.loss_fn(logits, labels)
+        # Update metrics
+        self.val_metrics.update(logits, labels)
 
-        self.val_metrics(logits, labels)
         self.log(
             "val/loss",
             loss,
-            on_step=True,
+            on_step=False,
             on_epoch=True,
             prog_bar=True,
+            batch_size=batch.num_graphs,
         )
 
         return loss
 
     def test_step(self, batch, batch_idx):
         with torch.inference_mode():
-            logits = self(batch)
+            logits = self(batch)  # [batch_size, num_tasks]
 
-        labels = batch.y
-        if self.hparams.num_outputs == 1 and labels.dim() == 1:
-            labels = labels.view(-1, 1)  # Ensure [B, 1]
+        labels = batch.y  # [batch_size, num_tasks]
 
-        # Compute loss
-        loss = self.loss_fn(logits, labels)
+        # Mask out NaN labels BEFORE calculating loss
+        is_valid = (logits == logits) & (labels == labels)
+        valid_logits = logits[is_valid]
+        valid_labels = labels[is_valid].float()
+        loss = self.loss_fn(valid_logits, valid_labels)
+
+        # Update metrics
+        self.test_metrics.update(logits, labels)
 
         self.log(
             "test/loss",
@@ -207,48 +207,39 @@ class BaselineModule(L.LightningModule):
         if self.hparams.task_type == "regression":
             return MetricCollection(
                 {
-                    f"{prefix}/mae": MeanAbsoluteError(),
-                    f"{prefix}/mse": MeanSquaredError(),
-                    f"{prefix}/r2": R2Score(),
+                    f"{prefix}/rmse": MultiTaskRMSE(num_tasks=self.hparams.num_outputs),
                 }
             )
         elif (
             self.hparams.task_type == "classification" and self.hparams.num_outputs == 1
         ):
-            # Binary classification - PR AUC is crucial for imbalanced data
             return MetricCollection(
                 {
-                    f"{prefix}/pr_auc": BinaryAveragePrecision(),  # PR AUC
-                    f"{prefix}/auroc": BinaryAUROC(),
-                    f"{prefix}/f1": BinaryF1Score(),
-                    f"{prefix}/precision": BinaryPrecision(),
-                    f"{prefix}/recall": BinaryRecall(),
+                    f"{prefix}/pr_auc": MultiTaskAP(num_tasks=self.hparams.num_outputs),
+                    f"{prefix}/auroc": MultiTaskROCAUC(
+                        num_tasks=self.hparams.num_outputs
+                    ),
+                    f"{prefix}/accuracy": MultiTaskAccuracy(
+                        num_tasks=self.hparams.num_outputs
+                    ),
+                    f"{prefix}/set_f1": SetF1Score(num_tasks=self.hparams.num_outputs),
                 }
             )
         elif (
             self.hparams.task_type == "classification" and self.hparams.num_outputs > 1
         ):
-            # Multiclass classification
             return MetricCollection(
                 {
-                    f"{prefix}/accuracy": MulticlassAccuracy(
-                        num_classes=self.hparams.num_outputs
+                    f"{prefix}/pr_auc": MultiTaskAP(
+                        num_tasks=self.hparams.num_outputs
+                    ),  # PR AUC
+                    f"{prefix}/auroc": MultiTaskROCAUC(
+                        num_tasks=self.hparams.num_outputs
                     ),
-                    f"{prefix}/auroc": MulticlassAUROC(
-                        num_classes=self.hparams.num_outputs
+                    f"{prefix}/accuracy": MultiTaskAccuracy(
+                        num_tasks=self.hparams.num_outputs
                     ),
-                    f"{prefix}/f1_macro": MulticlassF1Score(
-                        num_classes=self.hparams.num_outputs, average="macro"
-                    ),
-                    f"{prefix}/f1_weighted": MulticlassF1Score(
-                        num_classes=self.hparams.num_outputs, average="weighted"
-                    ),
-                    f"{prefix}/precision_macro": MulticlassPrecision(
-                        num_classes=self.hparams.num_outputs, average="macro"
-                    ),
-                    f"{prefix}/recall_macro": MulticlassRecall(
-                        num_classes=self.hparams.num_outputs, average="macro"
-                    ),
+                    f"{prefix}/set_f1": SetF1Score(num_tasks=self.hparams.num_outputs),
                 }
             )
         else:
