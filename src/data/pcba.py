@@ -24,10 +24,10 @@ class OgbgMolPcbaDataModule(pl.LightningDataModule):
         batch_size_train: int = 32,
         batch_size_inference: int = 32,
         num_workers: int = 0,
-        splits: list[float] = [0.72, 0.08, 0.1, 0.1],  # No usado en OGB
+        splits: list[float] = [0.72, 0.08, 0.1, 0.1],  # Train set (Unlabeled, Labeled), Val, Test
         seed: int = 0,
-        subset_size: int | None = None,  # Aplicado solo al training set
-        data_augmentation: bool = False,  # No usado en OGB
+        subset_size: int | None = None, 
+        data_augmentation: bool = False,  
         mode: str = "semisupervised",
         name: str = "ogbg-molpcba",
     ) -> None:
@@ -56,14 +56,11 @@ class OgbgMolPcbaDataModule(pl.LightningDataModule):
 
         rng = np.random.default_rng(seed=self.hparams.seed)
 
-        # Aplicar subset solo al training set (si se especifica)
         if self.hparams.subset_size is not None:
             train_idx = train_idx[: self.hparams.subset_size]
 
-        # Mezclar el training set
         train_idx = train_idx[rng.permutation(len(train_idx))]
 
-        # Dividir el training set de OGB en etiquetado y no etiquetado
         num_labeled = int(len(train_idx) * self.hparams.splits[1])
         labeled_indices = train_idx[:num_labeled]
         unlabeled_indices = train_idx[num_labeled:]
@@ -166,7 +163,7 @@ if __name__ == "__main__":
         num_workers=4,
         splits=[0.72, 0.08, 0.1, 0.1],
         seed=42,
-        subset_size=10000,  # Tomar solo 10k del set de entrenamiento
+        subset_size=10000,  
         mode="semisupervised",
     )
 

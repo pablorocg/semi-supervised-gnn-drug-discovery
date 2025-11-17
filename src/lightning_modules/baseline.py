@@ -98,8 +98,9 @@ class BaselineModule(L.LightningModule):
         valid_labels = labels[is_valid].float()
         loss = self.loss_fn(valid_logits, valid_labels)
 
-        # Update metrics
-        self.train_metrics.update(logits, labels)
+        # Cast to float32 for metrics to avoid bfloat16 -> numpy conversion error
+        logits_float = logits.float()
+        self.train_metrics.update(logits_float, labels)
 
         self.log(
             "train/loss",
@@ -122,8 +123,9 @@ class BaselineModule(L.LightningModule):
         valid_labels = labels[is_valid].float()
         loss = self.loss_fn(valid_logits, valid_labels)
 
-        # Update metrics
-        self.val_metrics.update(logits, labels)
+        # Cast to float32 for metrics to avoid bfloat16 -> numpy conversion error
+        logits_float = logits.float()
+        self.val_metrics.update(logits_float, labels)
 
         self.log(
             "val/loss",
@@ -133,13 +135,11 @@ class BaselineModule(L.LightningModule):
             prog_bar=True,
             batch_size=batch.num_graphs,
         )
-
         return loss
 
     def test_step(self, batch, batch_idx):
         with torch.inference_mode():
             logits = self(batch)  # [batch_size, num_tasks]
-
         labels = batch.y  # [batch_size, num_tasks]
 
         # Mask out NaN labels BEFORE calculating loss
@@ -148,8 +148,9 @@ class BaselineModule(L.LightningModule):
         valid_labels = labels[is_valid].float()
         loss = self.loss_fn(valid_logits, valid_labels)
 
-        # Update metrics
-        self.test_metrics.update(logits, labels)
+        # Cast to float32 for metrics to avoid bfloat16 -> numpy conversion error
+        logits_float = logits.float()
+        self.test_metrics.update(logits_float, labels)
 
         self.log(
             "test/loss",
@@ -159,8 +160,8 @@ class BaselineModule(L.LightningModule):
             prog_bar=True,
             batch_size=batch.num_graphs,
         )
-
         return loss
+
 
     def configure_optimizers(self):
         optimizer = SGD(
@@ -222,7 +223,7 @@ class BaselineModule(L.LightningModule):
                     f"{prefix}/accuracy": MultiTaskAccuracy(
                         num_tasks=self.hparams.num_outputs
                     ),
-                    f"{prefix}/set_f1": SetF1Score(num_tasks=self.hparams.num_outputs),
+                    f"{prefix}/set_f1": SetF1Score(),
                 }
             )
         elif (
@@ -239,7 +240,7 @@ class BaselineModule(L.LightningModule):
                     f"{prefix}/accuracy": MultiTaskAccuracy(
                         num_tasks=self.hparams.num_outputs
                     ),
-                    f"{prefix}/set_f1": SetF1Score(num_tasks=self.hparams.num_outputs),
+                    f"{prefix}/set_f1": SetF1Score(),
                 }
             )
         else:
