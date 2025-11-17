@@ -13,4 +13,4 @@ init:
   subset_size: null  # Use null for full dataset or int for subset
   data_augmentation: false
   mode: "semisupervised"
-  name: "pcba"  
+  name: "tox21"  

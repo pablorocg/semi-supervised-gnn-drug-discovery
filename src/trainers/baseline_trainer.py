@@ -47,6 +47,8 @@ def main(cfg: DictConfig) -> None:
     # Instantiate model
     model = instantiate(
         cfg.model.init,
+        in_channels=in_channels,
+        out_channels=n_outputs
     )
 
     # Create lightning module

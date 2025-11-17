@@ -1,8 +1,8 @@
 # configs/baseline_config.yaml
 
 defaults:
-  - dataset: ogbg  # Options: qm9, moleculenet, ogbg
-  - model: gnn  # Options: gin, gcn, gnn
+  - dataset: moleculenet  # Options: qm9, moleculenet, ogbg
+  - model: gcn  # Options: gin, gcn, gnn
   - lightning_module: baseline
   - trainer: default
   - logger: wandb

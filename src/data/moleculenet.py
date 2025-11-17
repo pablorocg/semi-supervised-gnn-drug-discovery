@@ -3,7 +3,6 @@ import pytorch_lightning as pl
 from pytorch_lightning.utilities.combined_loader import CombinedLoader
 from torch_geometric.datasets import MoleculeNet
 
-#puto
 from src.utils.dataset_utils import (
     DataLoader,
     GetTarget,
@@ -159,7 +158,7 @@ if __name__ == "__main__":
         subset_size=10000,
         data_augmentation=False,
         mode="semisupervised",
-        name="PCBA",
+        name="tox21",
     )
 
     dm.setup()
