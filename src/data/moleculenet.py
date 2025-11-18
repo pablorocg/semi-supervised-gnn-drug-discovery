@@ -43,11 +43,7 @@ class MoleculeNetDataModule(pl.LightningDataModule):
         # Shuffle dataset
         rng = np.random.default_rng(seed=self.hparams.seed)
         dataset = dataset[rng.permutation(len(dataset))]
-<<<<<<< HEAD
         
-=======
-
->>>>>>> main
         # Subset dataset
         if self.hparams.subset_size is not None:
             dataset = dataset[: self.hparams.subset_size]
@@ -60,7 +56,6 @@ class MoleculeNetDataModule(pl.LightningDataModule):
 
         split_idx = np.cumsum(split_sizes)
 
-<<<<<<< HEAD
         self.data_train_labeled = dataset[split_idx[0] : split_idx[1]]
 
         if self.hparams.mode == "semisupervised":
@@ -93,23 +88,6 @@ class MoleculeNetDataModule(pl.LightningDataModule):
             print(
                 f"Batch sizes: labeled={self.batch_size_train_labeled}, unlabeled={self.batch_size_train_unlabeled}"
             )
-=======
-        self.data_train_unlabeled = dataset[: split_idx[0]]
-        self.data_train_labeled = dataset[split_idx[0] : split_idx[1]]
-        self.data_val = dataset[split_idx[1] : split_idx[2]]
-        self.data_test = dataset[split_idx[2] :]
-
-        self.batch_size_train_labeled = self.hparams.batch_size_train
-        self.batch_size_train_unlabeled = self.hparams.batch_size_train
-
-        print(
-            f"Moleculenet {self.hparams.name} dataset loaded with {len(self.data_train_labeled)} labeled, {len(self.data_train_unlabeled)} unlabeled, "
-            f"{len(self.data_val)} validation, and {len(self.data_test)} test samples."
-        )
-        print(
-            f"Batch sizes: labeled={self.batch_size_train_labeled}, unlabeled={self.batch_size_train_unlabeled}"
-        )
->>>>>>> main
 
     def train_dataloader(self) -> CombinedLoader | DataLoader:
         if self.hparams.mode == "supervised":

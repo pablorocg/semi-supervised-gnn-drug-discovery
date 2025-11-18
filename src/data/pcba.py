@@ -42,10 +42,7 @@ class OgbgMolPcbaDataModule(pl.LightningDataModule):
             PygGraphPropPredDataset(name=self.dataset_name, root=self.data_dir)
 
     def setup(self, stage: str | None = None) -> None:
-<<<<<<< HEAD
         
-=======
->>>>>>> main
         with torch.serialization.safe_globals(PYG_SAFE_GLOBALS):
             self.dataset = PygGraphPropPredDataset(
                 name=self.dataset_name,
@@ -66,7 +63,6 @@ class OgbgMolPcbaDataModule(pl.LightningDataModule):
         train_idx = train_idx[rng.permutation(len(train_idx))]
 
         num_labeled = int(len(train_idx) * self.hparams.splits[1])
-<<<<<<< HEAD
         
         labeled_indices = train_idx[:num_labeled]
         self.data_train_labeled = self.dataset[labeled_indices]
@@ -76,20 +72,12 @@ class OgbgMolPcbaDataModule(pl.LightningDataModule):
             self.data_train_unlabeled = self.dataset[unlabeled_indices]
 
 
-=======
-        labeled_indices = train_idx[:num_labeled]
-        unlabeled_indices = train_idx[num_labeled:]
-
-        self.data_train_labeled = self.dataset[labeled_indices]
-        self.data_train_unlabeled = self.dataset[unlabeled_indices]
->>>>>>> main
         self.data_val = self.dataset[val_idx]
         self.data_test = self.dataset[test_idx]
 
         self.batch_size_train_labeled = self.hparams.batch_size_train
         self.batch_size_train_unlabeled = self.hparams.batch_size_train
 
-<<<<<<< HEAD
         self.print_dataset_info()
 
 
@@ -112,38 +100,20 @@ class OgbgMolPcbaDataModule(pl.LightningDataModule):
             print(
                 f"Batch sizes: labeled={self.batch_size_train_labeled}, unlabeled={self.batch_size_train_unlabeled}"
             )
-=======
-        print(
-            f"OGB {self.dataset_name} dataset loaded with {len(self.data_train_labeled)} labeled, {len(self.data_train_unlabeled)} unlabeled, "
-            f"{len(self.data_val)} validation, and {len(self.data_test)} test samples."
-        )
-        print(
-            f"Batch sizes: labeled={self.batch_size_train_labeled}, unlabeled={self.batch_size_train_unlabeled}"
-        )
->>>>>>> main
 
     def train_dataloader(self) -> CombinedLoader | DataLoader:
         if self.hparams.mode == "supervised":
             return CombinedLoader(
                 {
-<<<<<<< HEAD
                     "labeled": self.supervised_train_dataloader(), # 8% train data
-=======
-                    "labeled": self.supervised_train_dataloader(),
->>>>>>> main
                 },
                 mode="max_size_cycle",
             )
         elif self.hparams.mode == "semisupervised":
             return CombinedLoader(
                 {
-<<<<<<< HEAD
                     "labeled": self.supervised_train_dataloader(), # 8% train data
                     "unlabeled": self.unsupervised_train_dataloader(), # 92% train data
-=======
-                    "labeled": self.supervised_train_dataloader(),
-                    "unlabeled": self.unsupervised_train_dataloader(),
->>>>>>> main
                 },
                 mode="max_size_cycle",
             )
@@ -188,7 +158,6 @@ class OgbgMolPcbaDataModule(pl.LightningDataModule):
             persistent_workers=self.hparams.num_workers > 0,
         )
 
-<<<<<<< HEAD
     def compute_class_weights(self) -> torch.Tensor | None:
         # 128 tasks with binary classification (0/1/nan)
         y = self.data_train_labeled.y  # shape: [num_samples, num_tasks]
@@ -211,8 +180,6 @@ class OgbgMolPcbaDataModule(pl.LightningDataModule):
     def class_weights(self) -> torch.Tensor | None:
         return self.compute_class_weights()
     
-=======
->>>>>>> main
     @property
     def num_features(self) -> int:
         return self.dataset.num_node_features
@@ -238,25 +205,17 @@ if __name__ == "__main__":
         num_workers=4,
         splits=[0.72, 0.08, 0.1, 0.1],
         seed=42,
-<<<<<<< HEAD
          
         mode="supervised",
-=======
-        subset_size=10000,  
-        mode="semisupervised",
->>>>>>> main
     )
 
     dm.setup()
 
     dl = dm.train_dataloader()
 
-<<<<<<< HEAD
     class_weights = dm.class_weights
     print(f"Class weights: {class_weights}")
 
-=======
->>>>>>> main
     for batch, batch_idx, dataloader_idx in dl:
         print(
             f"""
@@ -273,11 +232,7 @@ if __name__ == "__main__":
             """
         )
 
-<<<<<<< HEAD
         
-=======
-        # Mostrar el contenido de cada uno de los tensores de características de nodos, índices de bordes y atributos de bordes
->>>>>>> main
         print(f"Node features:\n{batch['labeled'].x}")
         print(f"Edge indices:\n{batch['labeled'].edge_index}")
         print(f"Edge attributes:\n{batch['labeled'].edge_attr}")

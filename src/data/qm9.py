@@ -89,21 +89,40 @@ class QM9DataModule(pl.LightningDataModule):
 
         split_idx = np.cumsum(split_sizes)
 
-        self.data_train_unlabeled = dataset[: split_idx[0]]
         self.data_train_labeled = dataset[split_idx[0] : split_idx[1]]
+
+        # Semi-supervised: use part of training data as unlabeled data
+        if self.hparams.mode == "semisupervised":
+            self.data_train_unlabeled = dataset[: split_idx[0]]
+        
         self.data_val = dataset[split_idx[1] : split_idx[2]]
         self.data_test = dataset[split_idx[2] :]
 
         self.batch_size_train_labeled = self.hparams.batch_size_train
         self.batch_size_train_unlabeled = self.hparams.batch_size_train
 
-        print(
-            f"QM9 dataset loaded with {len(self.data_train_labeled)} labeled, {len(self.data_train_unlabeled)} unlabeled, "
-            f"{len(self.data_val)} validation, and {len(self.data_test)} test samples."
-        )
-        print(
-            f"Batch sizes: labeled={self.batch_size_train_labeled}, unlabeled={self.batch_size_train_unlabeled}"
-        )
+        self.print_dataset_info()
+
+
+    def print_dataset_info(self) -> None:
+        if self.hparams.mode == "supervised":
+            print("Using supervised mode.")
+            print(
+                f"QM9 {self.dataset_name} dataset loaded with {len(self.data_train_labeled)} labeled,"
+                f"{len(self.data_val)} validation, and {len(self.data_test)} test samples."
+            )
+            print(
+                f"Batch sizes: labeled={self.batch_size_train_labeled}"
+            )
+        elif self.hparams.mode == "semisupervised":
+            print("Using semi-supervised mode.")
+            print(
+                f"QM9 {self.dataset_name} dataset loaded with {len(self.data_train_labeled)} labeled, {len(self.data_train_unlabeled)} unlabeled, "
+                f"{len(self.data_val)} validation, and {len(self.data_test)} test samples."
+            )
+            print(
+                f"Batch sizes: labeled={self.batch_size_train_labeled}, unlabeled={self.batch_size_train_unlabeled}"
+            )
 
     def train_dataloader(self) -> CombinedLoader:
         if self.hparams.mode == "supervised":

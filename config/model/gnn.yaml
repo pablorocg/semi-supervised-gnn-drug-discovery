@@ -14,29 +14,3 @@ init:
   drop_ratio: 0.5
   JK: "last"
   graph_pooling: "mean"
-
-
-
-
-
-
-
-
-
-# class GNN(torch.nn.Module):
-#     def __init__(
-#         self,
-#         num_tasks,
-#         num_layer=5,
-#         emb_dim=300,
-#         gnn_type="gin",
-#         virtual_node=True,
-#         residual=False,
-#         drop_ratio=0.5,
-#         JK="last",
-#         graph_pooling="mean",
-#         use_node_encoder=True,
-#         use_edge_encoder=True,
-#         num_node_features=None,
-
-#   # ures: 11, type of task: regression, number of outputs: 19

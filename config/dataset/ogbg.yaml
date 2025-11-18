@@ -5,20 +5,12 @@ name: "ogbg-molpcba"
 init:
   _target_: src.data.pcba.OgbgMolPcbaDataModule
   target: null  
-<<<<<<< HEAD
   batch_size_train: 128
-=======
-  batch_size_train: 256
->>>>>>> main
   batch_size_inference: 256
   num_workers: 4
   splits: [0.72, 0.08, 0.1, 0.1]
   seed: 42
   subset_size: null # Use null for full dataset or int for subset
   data_augmentation: false
-<<<<<<< HEAD
   mode: "supervised"
-=======
-  mode: "semisupervised"
->>>>>>> main
   name: "ogbg-molpcba"  

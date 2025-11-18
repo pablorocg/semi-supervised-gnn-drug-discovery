@@ -39,10 +39,7 @@ def main(cfg: DictConfig) -> None:
     n_outputs = dm.num_tasks
     task_type = dm.task_type
     in_channels = dm.num_features
-<<<<<<< HEAD
     
-=======
->>>>>>> main
 
     print(
         f"Number of input features: {in_channels}, type of task: {task_type}, number of outputs: {n_outputs}"
@@ -51,11 +48,8 @@ def main(cfg: DictConfig) -> None:
     # Instantiate model
     model = instantiate(
         cfg.model.init,
-<<<<<<< HEAD
         in_channels=in_channels,
         out_channels=n_outputs,
-=======
->>>>>>> main
     )
 
     # Create lightning module
@@ -65,10 +59,7 @@ def main(cfg: DictConfig) -> None:
         model=model,
         num_outputs=n_outputs,
         task_type=task_type,
-<<<<<<< HEAD
   
-=======
->>>>>>> main
     )
 
     # Setup logger

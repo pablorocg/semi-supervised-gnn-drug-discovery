@@ -3,12 +3,6 @@
 name: "moleculenet"
 
 init:
-<<<<<<< HEAD
-  _target_: moleculenet.MoleculeNetDataModule
-  data_augmentation: false
-  mode: "supervised"
-  name: "tox21"  
-=======
   _target_: src.data.moleculenet.MoleculeNetDataModule
   target: null  # Moleculenet targets: 0-127
   batch_size_train: 32
@@ -18,6 +12,5 @@ init:
   seed: 42
   subset_size: null  # Use null for full dataset or int for subset
   data_augmentation: false
-  mode: "semisupervised"
-  name: "pcba"  
->>>>>>> main
+  mode: "supervised"
+  name: "tox21"  
