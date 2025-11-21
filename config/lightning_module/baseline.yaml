@@ -2,13 +2,13 @@
 
 init:
   _target_: src.lightning_modules.baseline.BaselineModule
-  learning_rate: 0.001
+  learning_rate: 0.0005
   optimizer: adamw
   warmup_epochs: 500
   cosine_period_ratio: 0.5
   compile: false
   weights: null
-  weight_decay: 1e-4
+  weight_decay: 1e-3
   nesterov: true
   momentum: 0.9
   

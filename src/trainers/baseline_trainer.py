@@ -12,7 +12,7 @@ from pytorch_lightning import seed_everything
 
 @hydra.main(
     config_path=get_configs_dir(),
-    config_name="baseline_config.yaml",
+    config_name="baseline_config",
     version_base="1.3",
 )
 def main(cfg: DictConfig) -> None:
@@ -90,6 +90,16 @@ def main(cfg: DictConfig) -> None:
 
     # Train and test
     trainer.fit(model=lightning_module, datamodule=dm)
+    
+    trainer.test(model=lightning_module, datamodule=dm)
+
+
+    # Load best checkpoint before testing
+    best_model_path = trainer.checkpoint_callback.best_model_path
+    print(f"Loading best model from: {best_model_path}")
+
+    lightning_module = lightning_module.load_weights(best_model_path)
+
     trainer.test(model=lightning_module, datamodule=dm)
 
 

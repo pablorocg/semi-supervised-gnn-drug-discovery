@@ -190,16 +190,6 @@ class BaselineModule(L.LightningModule):
 
     def configure_metrics(self, prefix: str):
         """Configure metrics for training, validation, and testing."""
-        # return MetricCollection(
-        #     {
-        #         f"{prefix}/pr_auc": MultiTaskAP(num_tasks=self.hparams.num_outputs),
-        #         f"{prefix}/auroc": MultiTaskROCAUC(num_tasks=self.hparams.num_outputs),
-        #         f"{prefix}/accuracy": MultiTaskAccuracy(
-        #             num_tasks=self.hparams.num_outputs
-        #         ),
-        #         f"{prefix}/set_f1": SetF1Score(),
-        #     }
-        # )
         return MetricCollection({
             f'{prefix}/roc_auc': MultitaskROC_AUC(num_tasks=self.hparams.num_outputs),
             f'{prefix}/ap': MultitaskAveragePrecision(num_tasks=self.hparams.num_outputs),
@@ -231,9 +221,13 @@ class BaselineModule(L.LightningModule):
 
     def load_weights(self, weights_path: str):
         """Load pretrained weights into both student and teacher models."""
-        state_dict = torch.load(weights_path, map_location="cpu")
-        self.student_model.load_state_dict(state_dict)
-        log.info(f"Weights loaded from {weights_path}")
+        # Load checkpoint from specified path (assumed to be a PyTorch Lightning checkpoint)
+        # Use the same device as the model is on
+        device = next(self.model.parameters()).device
+
+        checkpoint = torch.load(weights_path, map_location=device, weights_only=False)
+        self.load_state_dict(checkpoint["state_dict"], strict=True)
+        log.info(f"Loaded weights from {weights_path}")
 
 
 if __name__ == "__main__":
