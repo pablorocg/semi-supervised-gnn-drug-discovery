@@ -50,6 +50,18 @@ def get_logs_dir() -> str:
     
     return logs_dir
 
+
+def get_storage_dir() -> str:
+    """
+    Get the storage directory from environment variable or use default.
+    """
+    storage_dir = os.getenv("STORAGE_DIR", None)
+
+    if storage_dir is None:
+        raise EnvironmentError("STORAGE_DIR environment variable is not set.")
+    
+    return storage_dir
+
 def ensure_dir_exists(dir_path: str) -> None:
     """
     Ensure that a directory exists; if not, create it.
