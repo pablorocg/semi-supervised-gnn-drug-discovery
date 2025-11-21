@@ -2,7 +2,7 @@
 
 defaults:
   - dataset: moleculenet  # Options: qm9, moleculenet, ogbg
-  - model: gin  # Options: gin, gcn, gnn
+  - model: encoded_gine  # Options: gin, gcn, gnn, gine
   - lightning_module: baseline
   - trainer: default
   - logger: wandb

@@ -6,9 +6,9 @@ from torch_geometric.nn import MLP, GINConv, global_add_pool
 class GIN(torch.nn.Module):
     def __init__(
         self,
-        in_channels: int,
+        num_node_features: int,
         hidden_channels: int,
-        out_channels: int,
+        num_tasks: int,
         num_layers: int,
         dropout: float = 0.5,
     ):
@@ -16,12 +16,12 @@ class GIN(torch.nn.Module):
 
         self.convs = torch.nn.ModuleList()
         for _ in range(num_layers):
-            mlp = MLP([in_channels, hidden_channels, hidden_channels])
+            mlp = MLP([num_node_features, hidden_channels, hidden_channels])
             self.convs.append(GINConv(nn=mlp, train_eps=False))
-            in_channels = hidden_channels
+            num_node_features = hidden_channels
 
         self.mlp = MLP(
-            [hidden_channels, hidden_channels, out_channels],
+            [hidden_channels, hidden_channels, num_tasks],
             norm="batch_norm",
             dropout=dropout,
         )

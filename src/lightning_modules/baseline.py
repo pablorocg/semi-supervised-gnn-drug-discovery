@@ -3,17 +3,17 @@ import logging
 import pytorch_lightning as L
 import torch
 import torch.nn as nn
-from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
-from torch.optim import SGD
+from torch.nn import BCEWithLogitsLoss
+from torch.optim import SGD, AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torchmetrics import MetricCollection
 
 from src.utils.ogb_metrics import (
-    MultiTaskAccuracy,
-    MultiTaskAP,
-    MultiTaskRMSE,
-    MultiTaskROCAUC,
-    SetF1Score,
+    MultitaskAccuracy,
+    MultitaskAveragePrecision,
+    MultitaskF1,
+    MultitaskPR_AUC,
+    MultitaskROC_AUC,
 )
 
 
@@ -31,21 +31,12 @@ class BaselineModule(L.LightningModule):
         cosine_period_ratio: float = 1,
         compile: bool = True,
         weights: str = None,
+        optimizer: str = "adamw",
         weight_decay: float = 3e-5,
         nesterov: bool = True,
         momentum: float = 0.99,
-        augmentations: bool = True,
-        task_type: str = "regression",
-       
+        loss_weights: torch.Tensor = None,
     ):
-        """
-        Mean Teacher model for graph regression with semi-supervised learning.
-
-        Args:
-            model: Student model (teacher will be a copy with EMA updates)
-            num_outputs: Number of output regression targets (e.g., 1 for QM9)
-            ... (other args are the same) ...
-        """
         super().__init__()
 
         # Save hyperparameters
@@ -57,7 +48,10 @@ class BaselineModule(L.LightningModule):
         self.test_metrics = self.configure_metrics("test")
 
         # Loss config
-        self.loss_fn = self._setup_loss()
+        pos_weights = (
+            self.hparams.loss_weights if self.hparams.loss_weights is not None else None
+        )
+        self.loss_fn = BCEWithLogitsLoss(reduction="none", pos_weight=pos_weights)
 
         # Model config
         self.model = model
@@ -70,63 +64,50 @@ class BaselineModule(L.LightningModule):
         if self.hparams.compile:
             self.model = torch.compile(self.model, dynamic=True)
 
-    def _setup_loss(self):
-        """Setup loss function based on task type."""
-
-        task = self.hparams.task_type
-        n_outputs = self.hparams.num_outputs
-
-        if task == "regression":
-            return MSELoss()
-        elif task == "classification" and n_outputs == 1:
-            return BCEWithLogitsLoss()
-        elif task == "classification" and n_outputs > 1:
-            return BCEWithLogitsLoss(reduction="mean")
-        else:
-            raise ValueError(f"Unsupported task type: {task}")
-
     def forward(self, x):
         return self.model(x)
 
+    def _compute_masked_loss(self, logits, targets):
+        """
+        Computes loss while ignoring NaN values in targets.
+        """
+        is_labeled = ~torch.isnan(targets)
+        targets_safe = torch.where(is_labeled, targets, torch.zeros_like(targets))
+        loss_matrix = self.loss_fn(logits, targets_safe)
+        masked_loss = loss_matrix * is_labeled.float()
+        final_loss = masked_loss.sum() / (is_labeled.sum() + 1e-8)
+        return final_loss
+
     def training_step(self, batch, batch_idx):
-        labeled = batch["labeled"]
-        logits = self(labeled)
-        labels = labeled.y
+        # Handle different batch structures (semi-supervised vs supervised)
+        data = batch["labeled"]
 
-        # Mask out NaN labels BEFORE calculating loss
-        is_valid = (logits == logits) & (labels == labels)
-        valid_logits = logits[is_valid]
-        valid_labels = labels[is_valid].float()
-        loss = self.loss_fn(valid_logits, valid_labels)
+        logits = self(data)
 
-        # Cast to float32 for metrics to avoid bfloat16 -> numpy conversion error
-        logits_float = logits.float()
-        self.train_metrics.update(logits_float, labels)
+        labels = data.y.float()
+
+        loss = self._compute_masked_loss(logits, labels)
+
+        self.train_metrics.update(logits.float(), labels)
 
         self.log(
             "train/loss",
             loss,
             on_step=True,
             on_epoch=True,
-            batch_size=labeled.num_graphs,
+            batch_size=data.num_graphs,
         )
-        print(f"Train Step {batch_idx}, Loss: {loss.item()}")
         return loss
 
     def validation_step(self, batch, batch_idx):
         with torch.inference_mode():
-            logits = self(batch)  # [batch_size, num_tasks]
-        labels = batch.y  # [batch_size, num_tasks]
+            logits = self(batch)
 
-        # Mask out NaN labels BEFORE calculating loss
-        is_valid = (logits == logits) & (labels == labels)
-        valid_logits = logits[is_valid]
-        valid_labels = labels[is_valid].float()
-        loss = self.loss_fn(valid_logits, valid_labels)
+        labels = batch.y.float()
 
-        # Cast to float32 for metrics to avoid bfloat16 -> numpy conversion error
-        logits_float = logits.float()
-        self.val_metrics.update(logits_float, labels)
+        loss = self._compute_masked_loss(logits, labels)
+
+        self.val_metrics.update(logits.float(), labels)
 
         self.log(
             "val/loss",
@@ -140,18 +121,12 @@ class BaselineModule(L.LightningModule):
 
     def test_step(self, batch, batch_idx):
         with torch.inference_mode():
-            logits = self(batch)  # [batch_size, num_tasks]
-        labels = batch.y  # [batch_size, num_tasks]
+            logits = self(batch)
+        labels = batch.y.float()
 
-        # Mask out NaN labels BEFORE calculating loss
-        is_valid = (logits == logits) & (labels == labels)
-        valid_logits = logits[is_valid]
-        valid_labels = labels[is_valid].float()
-        loss = self.loss_fn(valid_logits, valid_labels)
+        loss = self._compute_masked_loss(logits, labels)
 
-        # Cast to float32 for metrics to avoid bfloat16 -> numpy conversion error
-        logits_float = logits.float()
-        self.test_metrics.update(logits_float, labels)
+        self.test_metrics.update(logits.float(), labels)
 
         self.log(
             "test/loss",
@@ -163,89 +138,75 @@ class BaselineModule(L.LightningModule):
         )
         return loss
 
-
     def configure_optimizers(self):
-        optimizer = SGD(
-            self.model.parameters(),
-            lr=self.hparams.learning_rate,
-            weight_decay=self.hparams.weight_decay,
-            momentum=self.hparams.momentum,
-            nesterov=self.hparams.nesterov,
-        )
-
-        steps_per_epoch = self.trainer.estimated_stepping_batches
-        total_steps = self.trainer.max_epochs * steps_per_epoch
-        warmup_steps = self.hparams.warmup_epochs * steps_per_epoch
-
-        cosine_steps = max(
-            1, int(self.hparams.cosine_period_ratio * (total_steps - warmup_steps))
-        )
-        cosine_scheduler = CosineAnnealingLR(optimizer, T_max=cosine_steps)
-
-        if self.hparams.warmup_epochs > 0 and warmup_steps > 0:
-            warmup_scheduler = LinearLR(
-                optimizer,
-                start_factor=1.0 / 1000,
-                total_iters=warmup_steps,
-            )
-            scheduler = SequentialLR(
-                optimizer,
-                schedulers=[warmup_scheduler, cosine_scheduler],
-                milestones=[warmup_steps],
+        if self.hparams.optimizer == "sgd":
+            optimizer = SGD(
+                self.model.parameters(),
+                lr=self.hparams.learning_rate,
+                weight_decay=self.hparams.weight_decay,
+                momentum=self.hparams.momentum,
+                nesterov=self.hparams.nesterov,
             )
         else:
-            scheduler = cosine_scheduler
+            optimizer = AdamW(
+                self.model.parameters(),
+                lr=self.hparams.learning_rate,
+                weight_decay=self.hparams.weight_decay,
+                amsgrad=False,
+                betas=(0.9, 0.98),
+            )
+
+        steps_per_epoch = (
+            self.trainer.estimated_stepping_batches // self.trainer.max_epochs
+        )
+
+        total_warmup_steps = int(self.hparams.warmup_epochs * steps_per_epoch)
+        # cosine_half_period is from max to min
+        cosine_steps = int(
+            self.hparams.cosine_period_ratio
+            * (self.trainer.max_epochs * steps_per_epoch - total_warmup_steps)
+        )
+
+        cosine_scheduler = CosineAnnealingLR(optimizer, T_max=cosine_steps)
+        warmup_scheduler = LinearLR(
+            optimizer,
+            start_factor=1.0 / 1000,
+            total_iters=total_warmup_steps,
+        )
+
+        scheduler = SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[total_warmup_steps],
+        )
 
         scheduler_config = {
             "scheduler": scheduler,
             "interval": "step",
-            "frequency": 1,
+            "frequency": 1,  # scheduler is updated after each batch
         }
 
         return [optimizer], [scheduler_config]
 
     def configure_metrics(self, prefix: str):
         """Configure metrics for training, validation, and testing."""
-        if self.hparams.task_type == "regression":
-            return MetricCollection(
-                {
-                    f"{prefix}/rmse": MultiTaskRMSE(num_tasks=self.hparams.num_outputs),
-                }
-            )
-        elif (
-            self.hparams.task_type == "classification" and self.hparams.num_outputs == 1
-        ):
-            return MetricCollection(
-                {
-                    f"{prefix}/pr_auc": MultiTaskAP(num_tasks=self.hparams.num_outputs),
-                    f"{prefix}/auroc": MultiTaskROCAUC(
-                        num_tasks=self.hparams.num_outputs
-                    ),
-                    f"{prefix}/accuracy": MultiTaskAccuracy(
-                        num_tasks=self.hparams.num_outputs
-                    ),
-                    f"{prefix}/set_f1": SetF1Score(),
-                }
-            )
-        elif (
-            self.hparams.task_type == "classification" and self.hparams.num_outputs > 1
-        ):
-            return MetricCollection(
-                {
-                    f"{prefix}/pr_auc": MultiTaskAP(
-                        num_tasks=self.hparams.num_outputs
-                    ),  # PR AUC
-                    f"{prefix}/auroc": MultiTaskROCAUC(
-                        num_tasks=self.hparams.num_outputs
-                    ),
-                    f"{prefix}/accuracy": MultiTaskAccuracy(
-                        num_tasks=self.hparams.num_outputs
-                    ),
-                    f"{prefix}/set_f1": SetF1Score(),
-                }
-            )
-        else:
-            raise ValueError(f"Unsupported task type: {self.hparams.task_type}")
+        # return MetricCollection(
+        #     {
+        #         f"{prefix}/pr_auc": MultiTaskAP(num_tasks=self.hparams.num_outputs),
+        #         f"{prefix}/auroc": MultiTaskROCAUC(num_tasks=self.hparams.num_outputs),
+        #         f"{prefix}/accuracy": MultiTaskAccuracy(
+        #             num_tasks=self.hparams.num_outputs
+        #         ),
+        #         f"{prefix}/set_f1": SetF1Score(),
+        #     }
+        # )
+        return MetricCollection({
+            f'{prefix}/roc_auc': MultitaskROC_AUC(num_tasks=self.hparams.num_outputs),
+            f'{prefix}/ap': MultitaskAveragePrecision(num_tasks=self.hparams.num_outputs),
+            f'{prefix}/pr_auc': MultitaskPR_AUC(num_tasks=self.hparams.num_outputs),
+            f'{prefix}/acc': MultitaskAccuracy(num_tasks=self.hparams.num_outputs),
+            f'{prefix}/f1': MultitaskF1(num_tasks=self.hparams.num_outputs)
+        })
 
     def on_train_epoch_end(self):
         """Log training metrics at the end of training epoch."""
@@ -279,16 +240,16 @@ if __name__ == "__main__":
     from pytorch_lightning import Trainer
     from pytorch_lightning.loggers import WandbLogger
 
-    from src.data.qm9 import QM9DataModule
+    # from src.data.qm9 import QM9DataModule
     from src.models.gcn import GCN
     from src.models.gin import GIN
 
-    data_module = QM9DataModule(
-        batch_size_train=128,
-        batch_size_inference=256,
-        num_workers=4,
-        target=0,
-    )
+    # data_module = QM9DataModule(
+    #     batch_size_train=128,
+    #     batch_size_inference=256,
+    #     num_workers=4,
+    #     target=0,
+    # )
 
     model_name = "GIN"
 

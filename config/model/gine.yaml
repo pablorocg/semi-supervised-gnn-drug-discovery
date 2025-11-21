@@ -1,0 +1,11 @@
+# configs/model/gine.yaml
+
+name: "GINE"
+
+init:
+  _target_: src.models.gine.GINE
+  _recursive_: false
+  hidden_channels: 256
+  dropout: 0.5
+  num_layers: 4 
+  
