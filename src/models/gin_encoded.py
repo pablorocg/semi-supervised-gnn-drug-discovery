@@ -232,6 +232,7 @@ class EncodedGINE(torch.nn.Module):
             "gelu": nn.GELU(),
             "silu": nn.SiLU(),
             "leaky_relu": nn.LeakyReLU(),
+            "elu": nn.ELU(),
         }
         return activations.get(name.lower(), nn.ReLU())
 

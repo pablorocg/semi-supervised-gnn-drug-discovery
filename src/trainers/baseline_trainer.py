@@ -23,12 +23,7 @@ def main(cfg: DictConfig) -> None:
     # Set seed for reproducibility
     seed_everything(cfg.seed, workers=True)
 
-    # Instantiate datamodule based on dataset name
-    if cfg.dataset.name == "ogbg-molpcba":
-        dm = instantiate(cfg.dataset.init, _target_=OgbgMolPcbaDataModule)
-    else:
-        dm = instantiate(cfg.dataset.init, _target_=MoleculeNetDataModule)
-
+    dm = instantiate(cfg.dataset.init)
     dm.setup("fit")
 
     # Get dataset properties
@@ -71,7 +66,7 @@ def main(cfg: DictConfig) -> None:
 
     # Create lightning module
     lightning_module = instantiate(
-        cfg.lightning_module.init,
+        cfg.lightning_module,
         _target_=BaselineModule,
         model=model,
         num_outputs=num_tasks,

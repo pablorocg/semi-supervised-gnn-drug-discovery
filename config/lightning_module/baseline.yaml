@@ -1,5 +1,4 @@
 # configs/lightning_module/baseline.yaml
-
 init:
   _target_: src.lightning_modules.baseline.BaselineModule
   learning_rate: 0.0005

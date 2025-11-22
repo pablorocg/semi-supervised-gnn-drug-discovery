@@ -79,13 +79,10 @@ class BaselineModule(L.LightningModule):
         return final_loss
 
     def training_step(self, batch, batch_idx):
-        # Handle different batch structures (semi-supervised vs supervised)
         data = batch["labeled"]
 
         logits = self(data)
-
         labels = data.y.float()
-
         loss = self._compute_masked_loss(logits, labels)
 
         self.train_metrics.update(logits.float(), labels)
@@ -104,7 +101,6 @@ class BaselineModule(L.LightningModule):
             logits = self(batch)
 
         labels = batch.y.float()
-
         loss = self._compute_masked_loss(logits, labels)
 
         self.val_metrics.update(logits.float(), labels)
@@ -122,8 +118,8 @@ class BaselineModule(L.LightningModule):
     def test_step(self, batch, batch_idx):
         with torch.inference_mode():
             logits = self(batch)
-        labels = batch.y.float()
 
+        labels = batch.y.float()
         loss = self._compute_masked_loss(logits, labels)
 
         self.test_metrics.update(logits.float(), labels)
@@ -189,40 +185,39 @@ class BaselineModule(L.LightningModule):
         return [optimizer], [scheduler_config]
 
     def configure_metrics(self, prefix: str):
-        """Configure metrics for training, validation, and testing."""
-        return MetricCollection({
-            f'{prefix}/roc_auc': MultitaskROC_AUC(num_tasks=self.hparams.num_outputs),
-            f'{prefix}/ap': MultitaskAveragePrecision(num_tasks=self.hparams.num_outputs),
-            f'{prefix}/pr_auc': MultitaskPR_AUC(num_tasks=self.hparams.num_outputs),
-            f'{prefix}/acc': MultitaskAccuracy(num_tasks=self.hparams.num_outputs),
-            f'{prefix}/f1': MultitaskF1(num_tasks=self.hparams.num_outputs)
-        })
+        return MetricCollection(
+            {
+                f"{prefix}/roc_auc": MultitaskROC_AUC(
+                    num_tasks=self.hparams.num_outputs
+                ),
+                f"{prefix}/ap": MultitaskAveragePrecision(
+                    num_tasks=self.hparams.num_outputs
+                ),
+                f"{prefix}/pr_auc": MultitaskPR_AUC(num_tasks=self.hparams.num_outputs),
+                f"{prefix}/acc": MultitaskAccuracy(num_tasks=self.hparams.num_outputs),
+                f"{prefix}/f1": MultitaskF1(num_tasks=self.hparams.num_outputs),
+            }
+        )
 
     def on_train_epoch_end(self):
-        """Log training metrics at the end of training epoch."""
         if self.train_metrics:
             metrics = self.train_metrics.compute()
             self.log_dict(metrics, on_step=False, on_epoch=True, prog_bar=False)
             self.train_metrics.reset()
 
     def on_validation_epoch_end(self):
-        """Log validation metrics at the end of validation epoch."""
         if self.val_metrics:
             metrics = self.val_metrics.compute()
             self.log_dict(metrics, on_step=False, on_epoch=True, prog_bar=False)
             self.val_metrics.reset()
 
     def on_test_epoch_end(self):
-        """Log test metrics at the end of testing epoch."""
         if self.test_metrics:
             metrics = self.test_metrics.compute()
             self.log_dict(metrics, on_step=False, on_epoch=True, prog_bar=False)
             self.test_metrics.reset()
 
     def load_weights(self, weights_path: str):
-        """Load pretrained weights into both student and teacher models."""
-        # Load checkpoint from specified path (assumed to be a PyTorch Lightning checkpoint)
-        # Use the same device as the model is on
         device = next(self.model.parameters()).device
 
         checkpoint = torch.load(weights_path, map_location=device, weights_only=False)
@@ -231,49 +226,4 @@ class BaselineModule(L.LightningModule):
 
 
 if __name__ == "__main__":
-    from pytorch_lightning import Trainer
-    from pytorch_lightning.loggers import WandbLogger
-
-    # from src.data.qm9 import QM9DataModule
-    from src.models.gcn import GCN
-    from src.models.gin import GIN
-
-    # data_module = QM9DataModule(
-    #     batch_size_train=128,
-    #     batch_size_inference=256,
-    #     num_workers=4,
-    #     target=0,
-    # )
-
-    model_name = "GIN"
-
-    if model_name == "GIN":
-        model = GIN(
-            in_channels=11,
-            hidden_channels=128,
-            out_channels=1,
-            num_layers=5,
-        )
-    else:
-        model = GCN(
-            num_node_features=11,
-            hidden_channels=128,
-        )
-
-    # mean_teacher_model = MeanTeacherRegressionModel(
-    #     model=model,
-    #     num_outputs=1,
-    #     learning_rate=0.01,
-    #     augmentations=True,
-    #     compile=True,
-    # )
-
-    trainer = Trainer(
-        max_epochs=150,
-        accelerator="auto",
-        devices="auto",
-        precision="16-mixed" if torch.cuda.is_available() else "32-true",
-        logger=WandbLogger(project="mean-teacher-graph-regression"),
-    )
-
-    # trainer.fit(model=mean_teacher_model, datamodule=data_module)
+    pass

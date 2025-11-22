@@ -1,11 +1,11 @@
-# configs/trainer/default.yaml
+# configs/trainer/hpo.yaml
 
 init:
   _target_: pytorch_lightning.Trainer
   max_epochs: 2000
   accelerator: "auto"
   devices: 1
-  precision: "bf16"
+  precision: "bf16-mixed"
   accumulate_grad_batches: 1
   log_every_n_steps: 20
   check_val_every_n_epoch: 1
