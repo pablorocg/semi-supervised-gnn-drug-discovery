@@ -5,16 +5,19 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric.transforms as T
-from torch.optim import SGD
+from torch.optim import SGD, AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch_ema import ExponentialMovingAverage
 from torch_geometric.data import Data
 from torch_geometric.utils.augmentation import mask_feature
 from torchmetrics import MetricCollection
-from torchmetrics.regression import (
-    MeanAbsoluteError,
-    MeanSquaredError,
-    R2Score,
+
+from src.utils.ogb_metrics import (
+    MultitaskAccuracy,
+    MultitaskAveragePrecision,
+    MultitaskF1,
+    MultitaskPR_AUC,
+    MultitaskROC_AUC,
 )
 
 log = logging.getLogger(__name__)
@@ -42,6 +45,7 @@ class MeanTeacherLoss(nn.Module):
         initial_weight: float = 0.0,
         max_weight: float = 1.0,
         steps: int = 5000,
+        pos_weights: torch.Tensor = None,
     ):
         """
         Initializes the stateless Mean Teacher Loss module.
@@ -51,8 +55,9 @@ class MeanTeacherLoss(nn.Module):
         self.max_weight = max_weight
         self.initial_weight = initial_weight
         self.steps = steps
+        self.pos_weights = pos_weights
 
-    def compute_consistency_weight(self, timestep: float) -> torch.Tensor:
+    def consistency_weight(self, timestep: float) -> torch.Tensor:
         """
         Computes the consistency weight at a given timestep using a sigmoid ramp-up.
 
@@ -107,21 +112,30 @@ class MeanTeacherLoss(nn.Module):
             [labeled_logits_teacher, unlabeled_logits_teacher], dim=0
         )
 
-        consistency_loss = self.compute_consistency_weight(timestep) * F.mse_loss(
+        consistency_loss = self.consistency_weight(timestep) * F.mse_loss(
             all_logits_student, all_logits_teacher
         )
 
         # Supervised Loss (L_supervised_sum)
         # Calculated ONLY on labeled data.
-        supervised_loss = F.mse_loss(labeled_logits_student, labels, reduction="mean")
+        is_labeled = ~torch.isnan(labels)
+        targets_safe = torch.where(is_labeled, labels, torch.zeros_like(labels))
+        loss_matrix = F.binary_cross_entropy_with_logits(
+            all_logits_student,
+            targets_safe,
+            reduction="none",
+            pos_weight=self.pos_weights,
+        )
+        masked_loss = loss_matrix * is_labeled.float()
+        supervised_loss = masked_loss.sum() / (is_labeled.sum() + 1e-8)
 
-        # L_total = 100 * p_labeled * L_supervised_sum + w(t) * L_consistency_mean
+        # L_total = L_supervised_sum + w(t) * L_consistency_mean
         total_loss = supervised_loss + consistency_loss
 
         return total_loss, supervised_loss, consistency_loss
 
 
-class MeanTeacherRegressionModel(L.LightningModule):
+class MeanTeacherModule(L.LightningModule):
     def __init__(
         self,
         model: nn.Module,
@@ -131,9 +145,11 @@ class MeanTeacherRegressionModel(L.LightningModule):
         cosine_period_ratio: float = 1,
         compile: bool = True,
         weights: str = None,
+        optimizer: str = "adamw",
         weight_decay: float = 3e-5,
         nesterov: bool = True,
         momentum: float = 0.99,
+        loss_weights: torch.Tensor = None,
         ema_decay: float = 0.999,
         consistency_weight: float = 1e-1,
         consistency_rampup_epochs: int = 5,  # Constant cons weight
@@ -163,7 +179,15 @@ class MeanTeacherRegressionModel(L.LightningModule):
         self.test_metrics = self.configure_metrics("test")
 
         # Loss config
-        self.loss_fn = MeanTeacherLoss()
+        pos_weights = (
+            self.hparams.loss_weights if self.hparams.loss_weights is not None else None
+        )
+        self.loss_fn = MeanTeacherLoss(
+            max_weight=self.hparams.max_consistency_weight,
+            steps=self.hparams.consistency_rampup_epochs
+            * self.trainer.estimated_stepping_batches,
+            pos_weights=pos_weights,
+        )
 
         # Model config
         self.student_model = model
@@ -184,13 +208,59 @@ class MeanTeacherRegressionModel(L.LightningModule):
 
     def on_fit_start(self):
         """Move EMA to the correct device after Lightning has moved the model."""
-        self.student_model.to(self.device)
         self.ema.to(self.device)
 
-        self._config_consistency_weight()
 
     def forward(self, x):
         return self.student_model(x)
+    
+    @staticmethod
+    def compute_loss(
+        student_logits: torch.Tensor,
+        teacher_logits: torch.Tensor,
+        labels: torch.Tensor,
+        consistency_weight: float,
+        pos_weights: torch.Tensor = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Stateless, JIT-friendly loss calculation.
+        """
+        # 1. Supervised Loss (Masked BCE) - Only on labeled data
+        # Split student logits: [Labeled_Batch] and [Unlabeled_Batch]
+        # We assume labeled data comes first in the concatenation or we slice based on label shape
+        num_labeled = labels.shape[0]
+        student_labeled = student_logits[:num_labeled]
+        
+        # Mask NaNs (Crucial for MolPCBA)
+        is_labeled = ~torch.isnan(labels)
+        
+        # Replace NaNs with 0 to prevent NaN propagation in BCE (masked out later)
+        # Note: We detach the fill value to be safe, though 0 is constant.
+        safe_labels = torch.where(is_labeled, labels, torch.zeros_like(labels))
+        
+        loss_matrix = F.binary_cross_entropy_with_logits(
+            student_labeled,
+            safe_labels,
+            reduction="none",
+            pos_weight=pos_weights,
+        )
+        
+        # Apply mask and normalize
+        masked_loss = loss_matrix * is_labeled.float()
+        # Avoid division by zero
+        supervised_loss = masked_loss.sum() / (is_labeled.sum() + 1e-8)
+
+        # 2. Consistency Loss (MSE on Sigmoids) - On ALL data
+        # Using Sigmoid before MSE is more stable for binary tasks than raw logits
+        cons_loss = F.mse_loss(
+            torch.sigmoid(student_logits), 
+            torch.sigmoid(teacher_logits)
+        )
+        weighted_cons_loss = consistency_weight * cons_loss
+
+        total_loss = supervised_loss + weighted_cons_loss
+        
+        return total_loss, supervised_loss, weighted_cons_loss
 
     def training_step(self, batch, batch_idx):
         labeled = batch["labeled"]
@@ -317,81 +387,81 @@ class MeanTeacherRegressionModel(L.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        optimizer = SGD(
-            self.student_model.parameters(),
-            lr=self.hparams.learning_rate,
-            weight_decay=self.hparams.weight_decay,
-            momentum=self.hparams.momentum,
-            nesterov=self.hparams.nesterov,
-        )
-
-        steps_per_epoch = self.trainer.estimated_stepping_batches
-        total_steps = self.trainer.max_epochs * steps_per_epoch
-        warmup_steps = self.hparams.warmup_epochs * steps_per_epoch
-
-        cosine_steps = max(
-            1, int(self.hparams.cosine_period_ratio * (total_steps - warmup_steps))
-        )
-        cosine_scheduler = CosineAnnealingLR(optimizer, T_max=cosine_steps)
-
-        if self.hparams.warmup_epochs > 0 and warmup_steps > 0:
-            warmup_scheduler = LinearLR(
-                optimizer,
-                start_factor=1.0 / 1000,
-                total_iters=warmup_steps,
-            )
-            scheduler = SequentialLR(
-                optimizer,
-                schedulers=[warmup_scheduler, cosine_scheduler],
-                milestones=[warmup_steps],
+        if self.hparams.optimizer == "sgd":
+            optimizer = SGD(
+                self.model.parameters(),
+                lr=self.hparams.learning_rate,
+                weight_decay=self.hparams.weight_decay,
+                momentum=self.hparams.momentum,
+                nesterov=self.hparams.nesterov,
             )
         else:
-            scheduler = cosine_scheduler
+            optimizer = AdamW(
+                self.model.parameters(),
+                lr=self.hparams.learning_rate,
+                weight_decay=self.hparams.weight_decay,
+                amsgrad=False,
+                betas=(0.9, 0.98),
+            )
+
+        steps_per_epoch = (
+            self.trainer.estimated_stepping_batches // self.trainer.max_epochs
+        )
+
+        total_warmup_steps = int(self.hparams.warmup_epochs * steps_per_epoch)
+        # cosine_half_period is from max to min
+        cosine_steps = int(
+            self.hparams.cosine_period_ratio
+            * (self.trainer.max_epochs * steps_per_epoch - total_warmup_steps)
+        )
+
+        cosine_scheduler = CosineAnnealingLR(optimizer, T_max=cosine_steps)
+        warmup_scheduler = LinearLR(
+            optimizer,
+            start_factor=1.0 / 1000,
+            total_iters=total_warmup_steps,
+        )
+
+        scheduler = SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[total_warmup_steps],
+        )
 
         scheduler_config = {
             "scheduler": scheduler,
             "interval": "step",
-            "frequency": 1,
+            "frequency": 1,  # scheduler is updated after each batch
         }
 
         return [optimizer], [scheduler_config]
 
     def configure_metrics(self, prefix: str):
-        """Configure regression metrics for training, validation, and testing."""
+        kwargs = {"num_tasks": self.num_outputs}
+
         return MetricCollection(
             {
-                f"{prefix}/mae": MeanAbsoluteError(),
-                f"{prefix}/mse": MeanSquaredError(),
-                f"{prefix}/r2": R2Score(),
+                f"{prefix}/roc_auc": MultitaskROC_AUC(**kwargs),
+                f"{prefix}/ap": MultitaskAveragePrecision(**kwargs),
+                f"{prefix}/pr_auc": MultitaskPR_AUC(**kwargs),
+                f"{prefix}/acc": MultitaskAccuracy(**kwargs),
+                f"{prefix}/f1": MultitaskF1(**kwargs),
             }
         )
 
     def on_train_epoch_end(self):
-        """Log training metrics at the end of training epoch."""
-        if self.train_metrics:
-            metrics = self.train_metrics.compute()
-            self.log_dict(
-                metrics, on_step=False, on_epoch=True, sync_dist=True, prog_bar=False
-            )
-            self.train_metrics.reset()
+        self._log_metrics(self.train_metrics)
 
     def on_validation_epoch_end(self):
-        """Log validation metrics at the end of validation epoch."""
-        if self.val_metrics:
-            metrics = self.val_metrics.compute()
-            self.log_dict(
-                metrics, on_step=False, on_epoch=True, sync_dist=True, prog_bar=True
-            )
-            self.val_metrics.reset()
+        self._log_metrics(self.val_metrics)
 
     def on_test_epoch_end(self):
-        """Log test metrics at the end of testing epoch."""
-        if self.test_metrics:
-            metrics = self.test_metrics.compute()
-            self.log_dict(
-                metrics, on_step=False, on_epoch=True, sync_dist=True, prog_bar=True
-            )
-            self.test_metrics.reset()
+        self._log_metrics(self.test_metrics)
+
+    def _log_metrics(self, metric_collection):
+        output = metric_collection.compute()
+        self.log_dict(output, on_step=False, on_epoch=True, sync_dist=True)
+        metric_collection.reset()
 
     def load_weights(self, weights_path: str):
         """Load pretrained weights into both student and teacher models."""
@@ -441,49 +511,4 @@ class MeanTeacherRegressionModel(L.LightningModule):
 
 
 if __name__ == "__main__":
-    from pytorch_lightning import Trainer
-    from pytorch_lightning.loggers import WandbLogger
-
-    from src.data.qm9 import QM9DataModule
-    from src.models.gcn import GCN
-    from src.models.gin import GIN
-
-    data_module = QM9DataModule(
-        batch_size_train=128,
-        batch_size_inference=256,
-        num_workers=4,
-        target=0,
-    )
-
-    model_name = "GIN"
-
-    if model_name == "GIN":
-        model = GIN(
-            in_channels=11,
-            hidden_channels=128,
-            out_channels=1,
-            num_layers=5,
-        )
-    else:
-        model = GCN(
-            num_node_features=11,
-            hidden_channels=128,
-        )
-
-    mean_teacher_model = MeanTeacherRegressionModel(
-        model=model,
-        num_outputs=1,
-        learning_rate=0.01,
-        augmentations=True,
-        compile=True,
-    )
-
-    trainer = Trainer(
-        max_epochs=150,
-        accelerator="auto",
-        devices="auto",
-        precision="16-mixed" if torch.cuda.is_available() else "32-true",
-        logger=WandbLogger(project="mean-teacher-graph-regression"),
-    )
-
-    trainer.fit(model=mean_teacher_model, datamodule=data_module)
+    pass

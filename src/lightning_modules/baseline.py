@@ -185,17 +185,15 @@ class BaselineModule(L.LightningModule):
         return [optimizer], [scheduler_config]
 
     def configure_metrics(self, prefix: str):
+        kwargs = {"num_tasks": self.num_outputs}
+
         return MetricCollection(
             {
-                f"{prefix}/roc_auc": MultitaskROC_AUC(
-                    num_tasks=self.hparams.num_outputs
-                ),
-                f"{prefix}/ap": MultitaskAveragePrecision(
-                    num_tasks=self.hparams.num_outputs
-                ),
-                f"{prefix}/pr_auc": MultitaskPR_AUC(num_tasks=self.hparams.num_outputs),
-                f"{prefix}/acc": MultitaskAccuracy(num_tasks=self.hparams.num_outputs),
-                f"{prefix}/f1": MultitaskF1(num_tasks=self.hparams.num_outputs),
+                f"{prefix}/roc_auc": MultitaskROC_AUC(**kwargs),
+                f"{prefix}/ap": MultitaskAveragePrecision(**kwargs),
+                f"{prefix}/pr_auc": MultitaskPR_AUC(**kwargs),
+                f"{prefix}/acc": MultitaskAccuracy(**kwargs),
+                f"{prefix}/f1": MultitaskF1(**kwargs),
             }
         )
 
