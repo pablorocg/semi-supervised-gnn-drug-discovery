@@ -63,21 +63,17 @@ To be documented.
 
 |  **Task**  |  **Status**  |  **Comments**  |
 |--------|----------|------------|
-|Setup Dataset Module for QM9|Done|Regression task|
-|Setup Dataset Module for MoleculeNet (PCBA)|Done|It can use any of the Moleculenet Datasets for classification/regression|
+|Setup Dataset Module for MoleculeNet (PCBA)|Done|It can use any of the Moleculenet Datasets for classification|
 |Configure Data Modules for SSL splits (labeled/unlabeled)|Done||
 |Implement GNN Models (GCN, GIN)|Done|We can try/implement more architectures|
 |Implement Supervised Baseline LightningModule|Done|Default params not optimized yet|
 |Create Configurable Trainer for Baseline|Done||
-|Implement Hyperparameter Search Framework|In progress||
-|Create Configurable Trainer for Hyperparameter Search Framework|In progress|40%|
+|Implement Hyperparameter Search Framework|Done||
+|Create Configurable Trainer for Hyperparameter Search Framework|Done|40%|
 |Implement Mean-Teacher LightningModule|In progress||
 |Implement Configurable Trainer for Mean-Teacher|Not Started||
-|Run Baseline Experiments|Not Started||
+|Run Baseline Experiments|Done||
 |Run Mean-Teacher Experiments|Not Started||
-|Implement Noisy NCP LightningModule|Not Started||
-|Implement Configurable Trainer for Noisy NCP|Not Started||
-|Run Noisy NCP Experiments|Not Started||
 |Write-up & Analysis|Not Started||
 
 
@@ -89,35 +85,60 @@ Each model will be trained and evaluated on:
 - **Validation set:** 10% of the labeled data
 - **Test set:** 20% of the labeled data
 
-### Regression Task (QM9 dataset)
-**Metric:** Mean Absolute Error (MAE)
 
-|Experiment|Model|% Labeled Data|Result on Test Set|
-|---|---|---|---|
-|Supervised Baseline|GCN|10%|-|
-|Supervised Baseline|GCN|20%|-|
-|Supervised Baseline|GCN|50%|-|
-|Mean Teacher|GCN|10%|-|
-|Mean Teacher|GCN|20%|-|
-|Mean Teacher|GCN|50%|-|
-|Noisy NCP|GCN|10%|-|
-|Noisy NCP|GCN|20%|-|
-|Noisy NCP|GCN|50%|-|
+### Classification Task (MoleculeNet - Tox21)
 
+**Metric:** ROC-AUC
+
+|Job ID|Experiment|Model|% Labeled Data|Result on Test Set (783 test samples)|
+|---|---|---|---|---|
+|2435|Supervised Baseline|GINE|10%  (782 labeled)|0.7406|
+|2436|Supervised Baseline|GINE|20% (1564 labeled)|0.7559|
+|2437|Supervised Baseline|GINE|50% (3911 labeled)|0.8189|
+||Mean Teacher|GINE|10%|-|
+||Mean Teacher|GINE|20%|-|
+||Mean Teacher|GINE|50%|-|
 
 
 ### Classification Task (MoleculeNet - PCBA dataset)
+
 **Metric:** ROC-AUC
+Supervised training details: 
+- batch size 256
+- scheduler cosine scheduler with warmup, 
+- learning rate 0.005, 
+- Max 1000 epochs (early stopping patience 10 (monitoring val loss).
+- Model: GINE with 5 layers, hidden dim 128, dropout 0.5 (654 K parameters)
+
+  embedding_dim: 16 # 256      
+  hidden_channels: 256   
+  encoder_num_heads: 4     # 256 / 4 = 64 dim per head
+  encoder_dropout: 0.1    
+  num_gnn_layers: 4        
+  gnn_mlp_layers: 2        
+  readout_mlp_layers: 2    
+  dropout: 0.5             
+  activation: "relu"       
+  pooling_type: "mean"    
+  use_residual: true      
+  learn_eps: true  
+
+
+
+
+
+
+
 
 |Experiment|Model|% Labeled Data|Result on Test Set|
 |---|---|---|---|
-|Supervised Baseline|GCN|10%|-|
-|Supervised Baseline|GCN|20%|-|
-|Supervised Baseline|GCN|50%|-|
-|Mean Teacher|GCN|10%|-|
-|Mean Teacher|GCN|20%|-|
-|Mean Teacher|GCN|50%|-|
-|Noisy NCP|GCN|10%|-|
-|Noisy NCP|GCN|20%|-|
-|Noisy NCP|GCN|50%|-|
+|Supervised Baseline|GINE|10%  43792 labeled|0.7901|
+|Supervised Baseline|GINE|20%  87585 labeled|-|
+|Supervised Baseline|GINE|50% 218963 labeled|-|
+|Mean Teacher|GINE|10%|-|
+|Mean Teacher|GINE|20%|-|
+|Mean Teacher|GINE|50%|-|
+
+
+
 

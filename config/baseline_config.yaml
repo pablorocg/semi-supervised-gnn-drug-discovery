@@ -21,9 +21,9 @@ force_deterministic: true
 dataset:
   init:
     name: "pcba"
-    splits: [0.4, 0.4, 0.1, 0.1]
+    splits: [0.3, 0.50, 0.1, 0.1]
     mode: "supervised"
-    batch_size_train: 16
+    batch_size_train: 256
 
 
 # Hydra configuration 
