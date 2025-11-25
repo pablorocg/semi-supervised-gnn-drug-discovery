@@ -110,9 +110,9 @@ Supervised training details:
 - Max 1000 epochs (early stopping patience 10 (monitoring val loss).
 - Model: GINE with 5 layers, hidden dim 128, dropout 0.5 (654 K parameters)
 
-  embedding_dim: 16 # 256      
+  embedding_dim: 16      
   hidden_channels: 256   
-  encoder_num_heads: 4     # 256 / 4 = 64 dim per head
+  encoder_num_heads: 4     
   encoder_dropout: 0.1    
   num_gnn_layers: 4        
   gnn_mlp_layers: 2        
@@ -128,13 +128,11 @@ Supervised training details:
 
 
 
-
-
 |Experiment|Model|% Labeled Data|Result on Test Set|
 |---|---|---|---|
 |Supervised Baseline|GINE|10%  43792 labeled|0.7901|
-|Supervised Baseline|GINE|20%  87585 labeled|-|
-|Supervised Baseline|GINE|50% 218963 labeled|-|
+|Supervised Baseline|GINE|20%  87585 labeled|0.8129|
+|Supervised Baseline|GINE|50% 218963 labeled|0.8425|
 |Mean Teacher|GINE|10%|-|
 |Mean Teacher|GINE|20%|-|
 |Mean Teacher|GINE|50%|-|
