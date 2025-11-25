@@ -149,7 +149,7 @@ class BaselineModule(L.LightningModule):
                 lr=self.hparams.learning_rate,
                 weight_decay=self.hparams.weight_decay,
                 amsgrad=False,
-                betas=(0.9, 0.98),
+                betas=(0.9, 0.999),
             )
 
         steps_per_epoch = (
@@ -185,7 +185,7 @@ class BaselineModule(L.LightningModule):
         return [optimizer], [scheduler_config]
 
     def configure_metrics(self, prefix: str):
-        kwargs = {"num_tasks": self.num_outputs}
+        kwargs = {"num_tasks": self.hparams.num_outputs}
 
         return MetricCollection(
             {

@@ -1,9 +1,9 @@
 # configs/baseline_config.yaml
 
 defaults:
-  - dataset: qm9  # Options: qm9, moleculenet
-  - model: gnn  # Options: gin, gcn, gnn
-  - lightning_module: baseline
+  - dataset: moleculenet  # Options: qm9, moleculenet, ogbg
+  - model: encoded_gine  # Options: gin, gcn, gnn, gine
+  - lightning_module: mean_teacher
   - trainer: default
   - logger: wandb
   - _self_  
@@ -11,6 +11,38 @@ defaults:
 # General settings
 seed: 42
 force_deterministic: true
+
+# Override configuration for specific components
+# This is how it looks up the dataset config file
+# # configs/dataset/moleculenet.yaml
+
+# name: "moleculenet"
+
+# init:
+#   _target_: src.data.moleculenet.MoleculeNetDataModule
+#   target: null  
+#   batch_size_train: 32
+#   batch_size_inference: 64
+#   num_workers: 4
+#   splits: [0.40, 0.40, 0.1, 0.1]
+#   seed: 42
+#   subset_size: null  # Use null for full dataset or int for subset
+#   data_augmentation: false
+#   mode: "supervised"
+#   name: "tox21"  
+
+#   # Experiments:
+#   # [0.72, 0.08, 0.1, 0.1] x 
+#   # [0.65, 0.15, 0.1, 0.1] x 
+#   # [0.50, 0.30, 0.1, 0.1] x 
+#   # [0.30, 0.50, 0.1, 0.1]
+
+dataset:
+  init:
+    splits: [0.75, 0.05, 0.1]
+    mode: "semisupervised"
+    batch_size_train: 16
+
 
 # Hydra configuration 
 hydra:
