@@ -2,7 +2,7 @@
 
 defaults:
   - dataset: moleculenet  # Options: qm9, moleculenet, ogbg
-  - model: encoded_gine  # Options: gin, gcn, gnn, gine
+  - model: ginev2  # Options: gin, gcn, gnn, gine
   - lightning_module: mean_teacher
   - trainer: default
   - logger: wandb
@@ -39,7 +39,7 @@ force_deterministic: true
 
 dataset:
   init:
-    splits: [0.75, 0.05, 0.1]
+    splits: [0.4, 0.4, 0.1]
     mode: "semisupervised"
     batch_size_train: 16
 
