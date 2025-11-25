@@ -1,6 +1,6 @@
 # configs/model/gine.yaml
 
-name: "GINE"
+name: "GINEv2"
 
 init:
   _target_: src.models.nets.gine.GINE

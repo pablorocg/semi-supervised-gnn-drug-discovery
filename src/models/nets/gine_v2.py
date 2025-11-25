@@ -1,5 +1,8 @@
 from typing import Any, Dict, List
-
+from src.models.encoders.moleculenet_encoders import (
+    MoleculeNetAttnAtomEncoder,
+    MoleculeNetAttnBondEncoder,
+)
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -15,7 +18,7 @@ from torch_geometric.nn import (
 )
 
 
-class EncodedGINE(torch.nn.Module):
+class GINEv2(torch.nn.Module):
     def __init__(
         self,
         num_tasks: int,
@@ -31,6 +34,7 @@ class EncodedGINE(torch.nn.Module):
         pooling_type: str = "add",
         use_residual: bool = True,
         learn_eps: bool = True,
+        dataset: str = "moleculenet",
     ):
         super().__init__()
 
@@ -41,15 +45,19 @@ class EncodedGINE(torch.nn.Module):
         self.dropout_p = dropout
         self.use_residual = use_residual
         self.pooling_type = pooling_type
-
-        self.node_encoder = MoleculeNetAtomicEncoder(
-            out_dim=embedding_dim, num_heads=encoder_num_heads, dropout=encoder_dropout
-        )
-        self.edge_encoder = MoleculeNetBondEncoder(
-            out_dim=embedding_dim, num_heads=encoder_num_heads, dropout=encoder_dropout
-        )
-
-        
+        if dataset == "moleculenet":
+            self.node_encoder = MoleculeNetAttnAtomEncoder(
+                out_dim=embedding_dim,
+                num_heads=encoder_num_heads,
+                dropout=encoder_dropout,
+            )
+            self.edge_encoder = MoleculeNetAttnBondEncoder(
+                out_dim=embedding_dim,
+                num_heads=encoder_num_heads,
+                dropout=encoder_dropout,
+            )
+        else:
+            raise ValueError(f"Dataset {dataset} not supported for GINEv2 model.")
 
         self.act_fn = self._get_activation(activation)
 
@@ -103,14 +111,11 @@ class EncodedGINE(torch.nn.Module):
         else:
             return global_add_pool(x, batch)
 
-    def forward(self, data):
-        
-        x = self.node_encoder(data)
+    def forward(self, data: Data) -> torch.Tensor:
+        x = self.node_encoder(data.x)
         edge_index = data.edge_index
-        edge_attr = self.edge_encoder(data)
+        edge_attr = self.edge_encoder(data.edge_attr)
         batch = data.batch
-
-        
 
         if self.input_proj is not None:
             x = self.input_proj(x)
@@ -159,7 +164,7 @@ if __name__ == "__main__":
 
     data = Data(x=node_features, edge_index=edge_index, edge_attr=edge_attr)
 
-    model = EncodedGINE(num_tasks=128)
+    model = GINEv2(num_tasks=128)
 
     out = model(data)
     print(out)  # Should print a tensor of shape [1, 1]

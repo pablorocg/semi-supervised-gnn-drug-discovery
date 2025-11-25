@@ -174,3 +174,81 @@ class MoleculeNetBondEncoder(nn.Module):
             self.embeddings[i](edge_attr[:, i]) for i in range(self.n_features)
         )
         return edge_emb
+    
+
+
+class MoleculeNetAttnAtomEncoder(nn.Module):
+    VOCAB_SIZE_PER_DIM = [119, 9, 11, 12, 9, 5, 8, 2, 2]
+
+    def __init__(self, out_dim: int = 64, num_heads: int = 4, dropout: float = 0.1):
+        super(MoleculeNetAttnAtomEncoder, self).__init__()
+
+        self.out_dim = out_dim
+        self.num_features = len(self.VOCAB_SIZE_PER_DIM)
+
+        self.encoders = nn.ModuleList()
+        for vocab_size in self.VOCAB_SIZE_PER_DIM:
+            self.encoders.append(nn.Embedding(vocab_size, out_dim))
+
+        self.attention = nn.MultiheadAttention(
+            embed_dim=out_dim, num_heads=num_heads, dropout=dropout
+        )
+        self.norm = nn.LayerNorm(out_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.long()
+
+
+        x_encoded_list = [
+            self.encoders[i](x[:, i]) for i in range(self.num_features)
+        ]
+
+        x_sequence = torch.stack(x_encoded_list, dim=0)
+
+        attn_output, _ = self.attention(
+            query=x_sequence, key=x_sequence, value=x_sequence
+        )
+        x_sequence = self.norm(x_sequence + attn_output)
+
+        node_embeddings = torch.mean(x_sequence, dim=0)  # [Num_Nodes, Emb_Dim]
+
+        return node_embeddings
+
+
+class MoleculeNetAttnBondEncoder(nn.Module):
+    VOCAB_SIZE_PER_DIM = [22, 6, 2]
+
+    def __init__(self, out_dim: int = 64, num_heads: int = 4, dropout: float = 0.1):
+        super(MoleculeNetAttnBondEncoder, self).__init__()
+        self.out_dim = out_dim
+        self.num_features = len(self.VOCAB_SIZE_PER_DIM)
+
+        self.encoders = nn.ModuleList()
+        for vocab_size in self.VOCAB_SIZE_PER_DIM:
+            self.encoders.append(nn.Embedding(vocab_size, out_dim))
+
+        self.attention = nn.MultiheadAttention(
+            embed_dim=out_dim, num_heads=num_heads, dropout=dropout
+        )
+        self.norm = nn.LayerNorm(out_dim)
+
+    def forward(self, edge_attr: torch.Tensor) -> torch.Tensor:
+        
+        edge_attr = edge_attr.long()
+        
+        edge_attr_encoded_list = [
+            self.encoders[i](edge_attr[:, i]) for i in range(self.num_features)
+        ]
+
+        edge_attr_sequence = torch.stack(edge_attr_encoded_list, dim=0)
+
+        attn_output, _ = self.attention(
+            query=edge_attr_sequence,
+            key=edge_attr_sequence,
+            value=edge_attr_sequence,
+        )
+        edge_attr_sequence = self.norm(edge_attr_sequence + attn_output)
+
+        bond_embeddings = torch.mean(edge_attr_sequence, dim=0)  # [Num_Edges, Emb_Dim]
+
+        return bond_embeddings
