@@ -159,3 +159,6 @@ logs/
 .vscode/settings.json
 mean-teacher-graph-regression/*dataset/
 dataset/
+dataset/ogbg_molpcba/processed/*.pt
+*.pt
+*.pt
