@@ -157,4 +157,4 @@ logs/
 *.gif
 *.pdf
 .vscode/settings.json
-mean-teacher-graph-regression/*
+mean-teacher-graph-regression/*dataset/
