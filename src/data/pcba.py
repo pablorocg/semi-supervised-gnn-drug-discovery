@@ -20,7 +20,7 @@ PYG_SAFE_GLOBALS = [Data, DataEdgeAttr, DataTensorAttr, GlobalStorage]
 class OgbgMolPcbaDataModule(pl.LightningDataModule):
     def __init__(
         self,
-        target: int = 0,
+        target: int | list[int] | None = None,
         batch_size_train: int = 32,
         batch_size_inference: int = 32,
         num_workers: int = 0,
@@ -43,10 +43,14 @@ class OgbgMolPcbaDataModule(pl.LightningDataModule):
 
     def setup(self, stage: str | None = None) -> None:
         with torch.serialization.safe_globals(PYG_SAFE_GLOBALS):
+            
+            # Only apply transform if target is specified
+            transform = GetTarget(self.hparams.target) if self.hparams.target is not None else None
+
             self.dataset = PygGraphPropPredDataset(
                 name=self.dataset_name,
                 root=self.data_dir,
-                transform=GetTarget(self.hparams.target),
+                transform=transform,
             )
 
         split_idx = self.dataset.get_idx_split()
@@ -144,16 +148,22 @@ class OgbgMolPcbaDataModule(pl.LightningDataModule):
 
     @property
     def num_tasks(self) -> int:
-        if isinstance(self.hparams.target, int):
+        if self.hparams.target is None:
+            return self.dataset.num_tasks  # 128 for PCBA
+        elif isinstance(self.hparams.target, int):
             return 1
         elif isinstance(self.hparams.target, list):
             return len(self.hparams.target)
-        else:
-            return self.dataset.num_tasks
+
 
     @property
     def task_type(self) -> str:
         return "classification"
+    
+    @property
+    def train_idx(self):
+        # Return indices of labeled training data
+        return range(len(self.data_train_labeled))
 
 
 if __name__ == "__main__":
@@ -168,6 +178,7 @@ if __name__ == "__main__":
     )
 
     dm.setup()
+
 
     dl = dm.train_dataloader()
 

@@ -9,6 +9,7 @@ import torch
 from torch.optim.lr_scheduler import StepLR
 
 
+
 def seed_everything(seed, force_deterministic):
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -87,3 +88,43 @@ def save_results(results, log_dir):
     with open(f"{log_dir}/results_{t}_{r}.pkl", "wb") as f:
         pickle.dump(results, f)
     print(f"Saved results to {log_dir}/results_{t}_{r}.pkl")
+
+import torch
+
+def calculate_pos_weights_from_tensor(labels: torch.Tensor, max_weight: float = 100.0):
+    """
+    Calculate per-task pos_weight for BCEWithLogitsLoss safely from a label tensor.
+
+    Args:
+        labels (torch.Tensor): Shape [num_samples, num_tasks], multi-task labels (0,1, or NaN)
+        max_weight (float): Maximum weight cap to prevent extreme values
+
+    Returns:
+        torch.Tensor: Shape [num_tasks] with pos_weight for each task
+    """
+    num_tasks = labels.shape[1]
+    pos_counts = torch.zeros(num_tasks, dtype=torch.float)
+    neg_counts = torch.zeros(num_tasks, dtype=torch.float)
+
+    for t in range(num_tasks):
+        task_labels = labels[:, t]
+        valid_mask = ~torch.isnan(task_labels)
+        valid_labels = task_labels[valid_mask]
+
+        if len(valid_labels) > 0:
+            pos_counts[t] = (valid_labels == 1).sum()
+            neg_counts[t] = (valid_labels == 0).sum()
+
+    pos_weights = torch.ones(num_tasks)
+    mask = pos_counts > 0
+    pos_weights[mask] = neg_counts[mask] / pos_counts[mask]
+    pos_weights = torch.clamp(pos_weights, min=1.0, max=max_weight)
+
+    # Optional: print summary
+    pos_ratio = pos_counts.sum() / (pos_counts.sum() + neg_counts.sum())
+    print(f"\nClass Distribution Analysis:")
+    print(f"Average positive ratio: {pos_ratio:.4f}")
+    print(f"Pos weights - Min: {pos_weights.min():.2f}, Max: {pos_weights.max():.2f}, Mean: {pos_weights.mean():.2f}")
+    print(f"Pos weights - Median: {pos_weights.median():.2f}, Std: {pos_weights.std():.2f}\n")
+
+    return pos_weights

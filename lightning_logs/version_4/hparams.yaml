@@ -1,0 +1,25 @@
+augmentations: true
+batch_size_inference: 512
+batch_size_train: 256
+compile: false
+cosine_period_ratio: 1
+data_augmentation: false
+learning_rate: 0.001
+mode: semisupervised
+momentum: 0.99
+name: ogbg-molpcba
+nesterov: true
+num_outputs: 128
+num_workers: 8
+seed: 0
+splits:
+- 0.72
+- 0.08
+- 0.1
+- 0.1
+subset_size: null
+target: null
+task_type: classification
+warmup_epochs: 10
+weight_decay: 1.0e-05
+weights: null

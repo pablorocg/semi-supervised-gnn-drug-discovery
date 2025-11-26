@@ -32,10 +32,11 @@ class RGG(torch.nn.Module):
             data.num_graphs,
         )
 
+        x = x.float()
         for conv in self.convs:
             x = conv(x, edge_index) 
             x = self.gelu(x)
         x = global_mean_pool(x, batch, size=batch_size)  # [batch_size, hidden_channels]
         x = self.mlp(x)  # [batch_size, out_channels]
-        return x
+        return x.float()
 
