@@ -1,431 +1,319 @@
 import logging
-import torch
-import torch.nn as nn
+
 import pytorch_lightning as L
-from torch.nn import BCEWithLogitsLoss, MSELoss
-from torch.optim import SGD
+import torch
+import torch.nn.functional as F
+from torch.optim import SGD, AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+from torch.optim.swa_utils import AveragedModel, update_bn
 from torchmetrics import MetricCollection
-from copy import deepcopy
-from src.utils.utils import calculate_pos_weights_from_tensor
 
 from src.utils.ogb_metrics import (
-    MultiTaskAccuracy,
-    MultiTaskAP,
-    MultiTaskRMSE,
-    MultiTaskROCAUC,
-    SetF1Score,
+    MultitaskAveragePrecision,
+    MultitaskF1,
+    MultitaskPR_AUC,
+    MultitaskROC_AUC,
 )
 
 log = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 
 class MeanTeacherModule(L.LightningModule):
     def __init__(
         self,
-        model: nn.Module,
+        model: torch.nn.Module,
         num_outputs: int,
-        ema_decay: float = 0.999,
-        consistency_weight: float = 0.1,
-        consistency_rampup_epochs: int = 50,
-        learning_rate: float = 1e-4,
-        warmup_epochs: int = 10,
+        learning_rate: float = 1e-3,
+        warmup_epochs: int = 5,
         cosine_period_ratio: float = 1,
-        compile: bool = False,
+        compile: bool = True,
         weights: str = None,
-        weight_decay: float = 1e-5,
+        optimizer: str = "adamw",
+        weight_decay: float = 3e-5,
         nesterov: bool = True,
-        momentum: float = 0.9,
-        task_type: str = "classification",
-        train_dataset=None,
-        train_idx=None,
+        momentum: float = 0.99,
+        loss_weights: torch.Tensor = None,
+        ema_decay: float = 0.999,
+        consistency_rampup_epochs: int = 5,
+        max_consistency_weight: float = 1.0,
+        validate_features: bool = True,
     ):
         super().__init__()
-        self.save_hyperparameters(ignore=["model", "train_dataset", "train_idx"])
+        self.save_hyperparameters(ignore=["model"])
 
-        # Student/Teacher models
-        self.student_model = model
-        self.teacher_model = deepcopy(model)
-        for param in self.teacher_model.parameters():
-            param.detach_()
+        self.num_outputs = num_outputs
+
+        # Load weights if provided
+        if weights:
+            self.load_weights(weights)
+
+        # Compilation
+        if compile:
+            self.student = torch.compile(model, dynamic=True)
+            log.info("Student model compiled.")
+        else:
+            self.student = model
+
+        # EMA Setup
+        self.teacher = AveragedModel(
+            self.student,
+            avg_fn=lambda averaged_model_parameter,
+            model_parameter,
+            num_averaged: ema_decay * averaged_model_parameter
+            + (1 - ema_decay) * model_parameter,
+        )
+
+        # Loss configuration
+        self.register_buffer(
+            "pos_weights",
+            self.hparams.loss_weights
+            if self.hparams.loss_weights is not None
+            else None,
+        )
 
         # Metrics
-        self.train_metrics = self.configure_metrics("train")
-        self.val_metrics = self.configure_metrics("val")
-        self.test_metrics = self.configure_metrics("test")
+        self.train_metrics = self._configure_metrics("train")
+        self.val_metrics = self._configure_metrics("val")
+        self.test_metrics = self._configure_metrics("test")
 
-        # Supervised loss setup
-        self._setup_supervised_loss(train_dataset, train_idx)
-        self.consistency_loss_fn = MSELoss()
-
-        if self.hparams.weights is not None:
-            self.load_weights(self.hparams.weights)
-
-        if self.hparams.compile:
-            self.student_model = torch.compile(self.student_model, dynamic=True)
-
-    def _setup_supervised_loss(self, train_dataset, train_idx):
-        """Set up pos_weight for BCE per task."""
-        if train_dataset is not None and train_idx is not None:
-            train_labels = train_dataset.data.y[train_idx].float()
-            self.pos_weight = calculate_pos_weights_from_tensor(train_labels)
-        else:
-            self.pos_weight = None
-        self.supervised_loss_fn = BCEWithLogitsLoss(reduction="none")
-
-    def _masked_bce_loss(self, logits, labels, mask):
-        """BCEWithLogitsLoss with per-task pos_weight and NaN masking."""
-        device = logits.device
-        
-        if mask.sum() == 0:
-            return torch.tensor(0.0, device=device)
-        
-        if self.pos_weight is not None:
-            pos_weight = self.pos_weight.to(device)
-            loss_fn = BCEWithLogitsLoss(pos_weight=pos_weight, reduction="none")
-        else:
-            loss_fn = BCEWithLogitsLoss(reduction="none")
-        
-        # Compute loss element-wise (shape: [batch_size, num_tasks])
-        loss = loss_fn(logits, labels)
-        
-        # Apply mask and take mean only over valid elements
-        masked_loss = loss[mask]
-        
-        return masked_loss.mean()
-
+    def on_fit_start(self):
+        """Ensure EMA device placement."""
+        # Get device of student model
+        self.student.to(self.device)
+        self.teacher.to(self.device)
 
     def forward(self, x):
-        return self.student_model(x)
+        return self.student(x)
 
-    def _rampup_weight(self, current_epoch: int) -> float:
-        """Sigmoid ramp-up for consistency weight."""
-        if current_epoch > self.hparams.consistency_rampup_epochs:
-            return self.hparams.consistency_weight
-        p = torch.clamp(torch.tensor(current_epoch / self.hparams.consistency_rampup_epochs), 0.0, 1.0)
-        rampup_factor = 1.0 / (1.0 + torch.exp(-5.0 * (p - 0.5))) * 2.0
-        rampup_factor = torch.clamp(rampup_factor, 0.0, 1.0)
-        return self.hparams.consistency_weight * rampup_factor.item()
+    @staticmethod
+    def compute_loss(
+        student_logits: torch.Tensor,
+        teacher_logits: torch.Tensor,
+        labels: torch.Tensor,
+        consistency_weight: float,
+        pos_weights: torch.Tensor = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Stateless, JIT-friendly loss calculation.
+        """
+        # 1. Supervised Loss (Masked BCE) - Only on labeled data
+        num_labeled = labels.shape[0]
+        student_labeled = student_logits[:num_labeled]
 
-    def on_train_batch_end(self, outputs, batch, batch_idx) -> None:
-        """EMA update for teacher model."""
-        alpha = self.hparams.ema_decay
-        for s_param, t_param in zip(self.student_model.parameters(), self.teacher_model.parameters()):
-            t_param.data.mul_(alpha).add_(s_param.data, alpha=1 - alpha)
-        for s_buffer, t_buffer in zip(self.student_model.buffers(), self.teacher_model.buffers()):
-            if t_buffer.dtype.is_floating_point:
-                t_buffer.data.mul_(alpha).add_(s_buffer.data, alpha=1 - alpha)
+        is_labeled = ~torch.isnan(labels)
+
+        # Replace NaNs with 0 to prevent NaN propagation in BCE
+        safe_labels = torch.where(is_labeled, labels, torch.zeros_like(labels))
+
+        loss_matrix = F.binary_cross_entropy_with_logits(
+            student_labeled,
+            safe_labels,
+            reduction="none",
+            pos_weight=pos_weights,
+        )
+
+        # Apply mask and normalize
+        masked_loss = loss_matrix * is_labeled.float()
+        supervised_loss = masked_loss.sum() / (is_labeled.sum() + 1e-8)
+
+        # 2. Consistency Loss (MSE on Sigmoids) - On ALL data
+        cons_loss = F.mse_loss(
+            torch.sigmoid(student_logits), torch.sigmoid(teacher_logits)
+        )
+        weighted_cons_loss = consistency_weight * cons_loss
+
+        total_loss = supervised_loss + weighted_cons_loss
+
+        return total_loss, supervised_loss, weighted_cons_loss
 
     def training_step(self, batch, batch_idx):
+        # Validate batch structure
+
         labeled = batch["labeled"]
         unlabeled = batch["unlabeled"]
-        device = self.device
 
-        #  Supervised Loss 
-        student_labeled_logits = self.student_model(labeled)
-        labels = labeled.y.float().to(device)
-        mask = ~torch.isnan(labels)
+        # Student Forward
+        pred_l_student = self.student(labeled)  # [num_labeled, num_tasks]
+        pred_u_student = self.student(unlabeled)  # [num_unlabeled, num_tasks]
+        all_preds_student = torch.cat(
+            [pred_l_student, pred_u_student], dim=0
+        )  # [num_labeled + num_unlabeled, num_tasks]
 
+        # Teacher Forward (Inference Mode + EMA)
+        with torch.inference_mode():
+            pred_l_teacher = self.teacher(labeled)
+            pred_u_teacher = self.teacher(unlabeled)
+            all_preds_teacher = torch.cat([pred_l_teacher, pred_u_teacher], dim=0)
 
-        supervised_loss = self._masked_bce_loss(student_labeled_logits, labels, mask)
-
-
-        # Update metrics
-        self.train_metrics.update(student_labeled_logits, labels)
-
-        #  Consistency Loss 
-        student_unlabeled_logits = self.student_model(unlabeled)
-        with torch.no_grad():
-            teacher_unlabeled_logits = self.teacher_model(unlabeled).detach()
-
-        student_unlabeled_logits = student_unlabeled_logits.float()
-        teacher_unlabeled_logits = teacher_unlabeled_logits.float()
-
-        consistency_mask = ~torch.isnan(teacher_unlabeled_logits)
-        if consistency_mask.sum() > 0:
-            diff = (student_unlabeled_logits - teacher_unlabeled_logits) ** 2
-            consistency_loss = (diff * consistency_mask.float()).sum() / consistency_mask.sum()
-        else:
-            consistency_loss = torch.tensor(0.0, device=device)
+        # # Align Labels
+        labels = labeled.y
         
 
-        #  Total Loss 
-        rampup_weight = self._rampup_weight(self.current_epoch)
-        total_loss = supervised_loss + rampup_weight * consistency_loss
+        # Get Consistency Weight
+        curr_cons_weight = self._get_consistency_weight()
 
-        #  Logging 
-        # Show only total loss in progress bar
-        self.log(
-            "train/loss",
-            total_loss,
+        # Compute Loss
+        loss, sup_loss, cons_loss = self.compute_loss(
+            all_preds_student,
+            all_preds_teacher,
+            labels,
+            curr_cons_weight,
+            self.pos_weights,
+        )
+
+        self.train_metrics(pred_l_student.float(), labels.float())
+        self.log_dict(
+            {
+                "train/loss": loss,
+                "train/sup_loss": sup_loss,
+                "train/cons_loss": cons_loss,
+                "train/cons_weight": curr_cons_weight,
+            },
             on_step=True,
             on_epoch=True,
             prog_bar=True,
-            batch_size=labeled.num_graphs,
         )
 
-        # Log individual components (no duplication)
-        self.log("train/supervised_loss", supervised_loss, on_step=True, on_epoch=True)
-        self.log("train/consistency_loss", consistency_loss, on_step=True, on_epoch=True)
-        self.log("train/consistency_weight", rampup_weight, on_step=True, on_epoch=True)
+        return loss
 
-        return total_loss
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        self.teacher.update_parameters(self.student)
 
+    def on_train_epoch_end(self):
 
-    
+        self._log_metrics(self.train_metrics)
+        if self.current_epoch % 10 == 0:  
+            
+            update_bn(
+                self.trainer.train_dataloader,
+                self.teacher,
+                device=self.device
+            )
 
     def validation_step(self, batch, batch_idx):
-        with torch.inference_mode():
-            logits = self.student_model(batch)
-        labels = batch.y.float().to(self.device)
+        return self._shared_eval_step(batch, self.val_metrics, "val")
 
-        mask = ~torch.isnan(labels)
+    def test_step(self, batch, batch_idx):
+        return self._shared_eval_step(batch, self.test_metrics, "test")
 
-        if mask.sum() == 0:
-            loss = torch.tensor(0.0, device=self.device)
-        else:
-            valid_logits = logits.clone()
-            valid_labels = labels.clone()
-            valid_logits[~mask] = 0.0
-            valid_labels[~mask] = 0.0
-            loss = self.supervised_loss_fn(valid_logits, valid_labels)
-            if loss.dim() > 0:  # ensure scalar
-                loss = loss.mean()
+    def _shared_eval_step(self, batch, metric_collection, prefix):
+        """Unified evaluation logic handling NaNs correctly."""
 
-        self.val_metrics.update(logits, labels)
+        # Use EMA parameters for evaluation
+        preds = self.teacher(batch)
+
+        labels = batch.y
+
+        is_labeled = ~torch.isnan(labels)
+        safe_labels = torch.where(is_labeled, labels, torch.zeros_like(labels))
+
+        loss_matrix = F.binary_cross_entropy_with_logits(
+            preds, safe_labels, reduction="none", pos_weight=self.pos_weights
+        )
+        loss = (loss_matrix * is_labeled.float()).sum() / (is_labeled.sum() + 1e-8)
+
+        # Update metrics (Cast to float32)
+        metric_collection(preds.float(), labels.float())
+
         self.log(
-            "val/loss",
+            f"{prefix}/loss",
             loss,
             on_step=False,
             on_epoch=True,
             prog_bar=True,
-            batch_size=batch.num_graphs,
+            sync_dist=True,
         )
         return loss
 
+    def _get_consistency_weight(self) -> float:
+        """Computes sigmoid ramp-up weight."""
+        if self.hparams.consistency_rampup_epochs == 0:
+            return self.hparams.max_consistency_weight
 
+        # Steps calculation
+        max_steps = self.hparams.consistency_rampup_epochs * (
+            self.trainer.estimated_stepping_batches // self.trainer.max_epochs
+        )
 
-    def test_step(self, batch, batch_idx):
-        with torch.inference_mode():
-            logits = self.student_model(batch)
-        labels = batch.y.float()
-        mask = ~torch.isnan(labels)
-        loss = self._masked_bce_loss(logits, labels, mask)
-        self.test_metrics.update(logits, labels)
-        self.log("test/loss", loss, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch.num_graphs)
-        return loss
+        if self.global_step >= max_steps:
+            return self.hparams.max_consistency_weight
+
+        # Sigmoid ramp-up
+        phase = 1.0 - (self.global_step / max_steps)
+        return float(
+            self.hparams.max_consistency_weight
+            * torch.exp(torch.tensor(-5.0 * phase * phase))
+        )
 
     def configure_optimizers(self):
-        from torch.optim import AdamW
-        
-        optimizer = AdamW(
-            self.student_model.parameters(),
-            lr=self.hparams.learning_rate,
-            weight_decay=self.hparams.weight_decay,
-            betas=(0.9, 0.999)
-        )
-        
-        steps_per_epoch = self.trainer.estimated_stepping_batches // self.trainer.max_epochs
-        total_steps = self.trainer.max_epochs * steps_per_epoch
-        warmup_steps = self.hparams.warmup_epochs * steps_per_epoch
+        params = self.student.parameters()
 
-        cosine_steps = max(1, int(self.hparams.cosine_period_ratio * (total_steps - warmup_steps)))
-        cosine_scheduler = CosineAnnealingLR(optimizer, T_max=cosine_steps)
-
-        if self.hparams.warmup_epochs > 0 and warmup_steps > 0:
-            warmup_scheduler = LinearLR(optimizer, start_factor=1.0 / 1000, total_iters=warmup_steps)
-            scheduler = SequentialLR(
-                optimizer,
-                schedulers=[warmup_scheduler, cosine_scheduler],
-                milestones=[warmup_steps],
+        if self.hparams.optimizer == "sgd":
+            optimizer = SGD(
+                params,
+                lr=self.hparams.learning_rate,
+                momentum=self.hparams.momentum,
+                nesterov=self.hparams.nesterov,
+                weight_decay=self.hparams.weight_decay,
             )
         else:
-            scheduler = cosine_scheduler
+            optimizer = AdamW(
+                params,
+                lr=self.hparams.learning_rate,
+                weight_decay=self.hparams.weight_decay,
+                betas=(0.9, 0.999),
+            )
 
-        scheduler_config = {"scheduler": scheduler, "interval": "step", "frequency": 1}
-        return [optimizer], [scheduler_config]
+        steps_per_epoch = (
+            self.trainer.estimated_stepping_batches // self.trainer.max_epochs
+        )
+        warmup_steps = int(self.hparams.warmup_epochs * steps_per_epoch)
+        total_steps = self.trainer.estimated_stepping_batches
 
-    def configure_metrics(self, prefix: str):
-        if self.hparams.task_type == "regression":
-            return MetricCollection({f"{prefix}/rmse": MultiTaskRMSE(num_tasks=self.hparams.num_outputs)})
-        elif self.hparams.task_type == "classification" and self.hparams.num_outputs == 1:
-            return MetricCollection({
-                f"{prefix}/pr_auc": MultiTaskAP(num_tasks=self.hparams.num_outputs),
-                f"{prefix}/auroc": MultiTaskROCAUC(num_tasks=self.hparams.num_outputs),
-                f"{prefix}/accuracy": MultiTaskAccuracy(num_tasks=self.hparams.num_outputs),
-                f"{prefix}/set_f1": SetF1Score(),
-            })
-        elif self.hparams.task_type == "classification" and self.hparams.num_outputs > 1:
-            return MetricCollection({
-                f"{prefix}/pr_auc": MultiTaskAP(num_tasks=self.hparams.num_outputs),
-                f"{prefix}/auroc": MultiTaskROCAUC(num_tasks=self.hparams.num_outputs),
-                f"{prefix}/accuracy": MultiTaskAccuracy(num_tasks=self.hparams.num_outputs),
-                f"{prefix}/set_f1": SetF1Score(),
-            })
-        else:
-            raise ValueError(f"Unsupported task type: {self.hparams.task_type}")
+        scheduler = SequentialLR(
+            optimizer,
+            schedulers=[
+                LinearLR(optimizer, start_factor=1e-3, total_iters=warmup_steps),
+                CosineAnnealingLR(optimizer, T_max=total_steps - warmup_steps),
+            ],
+            milestones=[warmup_steps],
+        )
 
-    def on_train_epoch_end(self):
-        if self.train_metrics:
-            metrics = self.train_metrics.compute()
-            self.log_dict(metrics, on_step=False, on_epoch=True, prog_bar=False)
-            self.train_metrics.reset()
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "step",
+                "frequency": 1,
+            },
+        }
 
-    def on_validation_epoch_end(self):
-        if self.val_metrics:
-            try:
-                metrics = self.val_metrics.compute()
-                self.log_dict(metrics, on_step=False, on_epoch=True, prog_bar=False)
-            except RuntimeError as e:
-                if "No positively labeled data" in str(e):
-                    log.warning(f"Skipping metric computation at epoch {self.current_epoch}: {e}")
-                    self.log("val/auroc", float('nan'), on_step=False, on_epoch=True)
-                else:
-                    raise
-            finally:
-                self.val_metrics.reset()
-
-    def on_test_epoch_end(self):
-        if self.test_metrics:
-            metrics = self.test_metrics.compute()
-            self.log_dict(metrics, on_step=False, on_epoch=True, prog_bar=False)
-            self.test_metrics.reset()
+    def _configure_metrics(self, prefix: str):
+        kwargs = {"num_tasks": self.num_outputs}
+        return MetricCollection(
+            {
+                f"{prefix}/roc_auc": MultitaskROC_AUC(**kwargs),
+                f"{prefix}/ap": MultitaskAveragePrecision(**kwargs),
+                f"{prefix}/pr_auc": MultitaskPR_AUC(**kwargs),
+                f"{prefix}/f1": MultitaskF1(**kwargs),
+            }
+        )
 
     def load_weights(self, weights_path: str):
         state_dict = torch.load(weights_path, map_location="cpu")
-        self.student_model.load_state_dict(state_dict)
-        self.teacher_model.load_state_dict(state_dict)
-        log.info(f"Weights loaded into student and teacher from {weights_path}")
+        self.student.load_state_dict(state_dict)
+        log.info(f"Loaded weights from {weights_path}")
 
-
-
-
-def main():
-    import torch
-    from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
-    from pytorch_lightning.loggers import WandbLogger
-    from src.models.gine import GINE
-    from src.data.pcba import OgbgMolPcbaDataModule
-
-    # GPUL40S optimization
-    torch.set_float32_matmul_precision('medium')
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
-    
-    LR = 5e-5
-    EMA_DECAY = 0.999
-    CONSISTENCY_WEIGHT = 0.1
-    RAMPUP_EPOCHS = 50
-    
-    NUM_EPOCHS = 300
-    TRAIN_BATCH_SIZE = 128
-    INFERENCE_BATCH_SIZE = 256
-    NUM_WORKERS = 4
-    
-    # MolPCBA specifics
-    NUM_TASKS = 128 
-    
-    # This sets up the OGB-MolPCBA dataset and the CombinedLoader for SSL
-    data_module = OgbgMolPcbaDataModule(
-        batch_size_train=TRAIN_BATCH_SIZE,
-        batch_size_inference=INFERENCE_BATCH_SIZE,
-        num_workers=NUM_WORKERS,
-        splits=[0.35, 0.35, 0.15, 0.15],  # Labeled, Unlabeled, Val, Test (I raised validation because of no positive labels error)
-    )
-    
-    # Prepare data to get necessary objects for pos_weight calculation
-    data_module.prepare_data()
-    data_module.setup(stage="fit")
-    num_outputs = data_module.num_tasks
-    print(f"Using {num_outputs} output tasks")
-
-
-    print(f"Dataset first sample y shape: {data_module.dataset[0].y.shape}")
-    print(f"Dataset first sample y: {data_module.dataset[0].y}")
-    print(f"Labeled dataset first sample y shape: {data_module.data_train_labeled[0].y.shape}")
-
-    # Get dataset information needed for the MeanTeacherModule constructor
-    # FIXED: Use the correct attribute names from your baseline code
-    train_dataset = data_module.data_train_labeled  # Changed from train_dataset
-    train_indices = data_module.train_idx  # This seems correct already
-
-    # Instantiate the base GNN model (Student/Teacher)
-    gnn_model = GINE(
-        num_tasks=num_outputs,
-        num_node_features=data_module.num_features,  
-        num_edge_features=3,  
-        hidden_dim=256,
-        num_layers=5,
-        dropout=0.5,
-        use_residual=True,
-        use_virtual_node=True,
-        use_attention_pool=True,
-        num_mlp_layers=2,
-    )
-
-    mean_teacher_model = MeanTeacherModule(
-        model=gnn_model,
-        num_outputs = data_module.num_tasks,
+  
         
-        # Mean Teacher Hyperparameters
-        ema_decay=EMA_DECAY,
-        consistency_weight=CONSISTENCY_WEIGHT,
-        consistency_rampup_epochs=RAMPUP_EPOCHS,
 
-        # Optimization & Stability
-        learning_rate=LR,
-        warmup_epochs=10,
-        weight_decay=1e-5,
-        task_type="classification",
-        
-        # Data needed for stability utilities (pos_weight calc)
-        train_dataset=train_dataset,
-        train_idx=train_indices,
-    )
+    def on_validation_epoch_end(self):
+        self._log_metrics(self.val_metrics)
 
-    from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
-    from pytorch_lightning.loggers import WandbLogger
+    def on_test_epoch_end(self):
+        self._log_metrics(self.test_metrics)
 
-    callbacks = [
-        LearningRateMonitor(logging_interval="step"),
-        # Save the best model based on validation PR-AUC (the correct metric for PCBA)
-        ModelCheckpoint(
-            monitor="val/pr_auc",
-            mode="max",
-            dirpath="checkpoints/",
-            filename="best-mean-teacher-{epoch:02d}-{val/pr_auc:.4f}",
-            save_top_k=1,
-            verbose=True,
-        ),
-    ]
-
-    # Logger
-    wandb_logger = WandbLogger(
-        project="semi-supervised-gnn-drug-discovery",
-        name=f"MeanTeacher_C{CONSISTENCY_WEIGHT}",
-    )
-
-    trainer = L.Trainer(
-        max_epochs=NUM_EPOCHS,
-        accelerator="auto",
-        devices="auto",
-        # Use 16-mixed precision for speed/memory efficiency (recommended for GNNs)
-        precision="16-mixed" if torch.cuda.is_available() else "32-true",
-        logger=wandb_logger,
-        callbacks=callbacks,
-        gradient_clip_val=1.0,
-        accumulate_grad_batches=2,
-    )
-
-    # Start Training
-    print("Starting Mean Teacher Training...")
-    trainer.fit(mean_teacher_model, datamodule=data_module)
-    print("Training Complete.")
-    
-    # Test the model
-    trainer.test(mean_teacher_model, datamodule=data_module)
-
-
-if __name__ == "__main__":
-    main()
+    def _log_metrics(self, metric_collection):
+        output = metric_collection.compute()
+        self.log_dict(output, on_step=False, on_epoch=True, sync_dist=True)
+        metric_collection.reset()

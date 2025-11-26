@@ -2,20 +2,18 @@
 
 init:
   _target_: pytorch_lightning.Trainer
-  max_epochs: 200
+  max_epochs: 1000
   accelerator: "auto"
   devices: 1
-  precision: "16-mixed"
-  gradient_clip_val: 1.0
-  gradient_clip_algorithm: "norm"
-  accumulate_grad_batches: 2
-  log_every_n_steps: 25
+  precision: "bf16-mixed"
+  accumulate_grad_batches: 1
+  log_every_n_steps: 35
   check_val_every_n_epoch: 1
   enable_checkpointing: true
   enable_progress_bar: true
   enable_model_summary: true
   deterministic: false
-  benchmark: true
+  benchmark: false
   
   
   callbacks:
@@ -33,15 +31,13 @@ init:
       filename: "last"      
       verbose: false
       
-    # - _target_: pytorch_lightning.callbacks.EarlyStopping
-    #   monitor: "val/loss"
-    #   patience: 20
-    #   mode: "min" 
-      
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: "epoch"
 
-    # - _target_: optuna_integration.pytorch_lightning.PyTorchLightningPruningCallback
-    #   monitor: "val/loss"
+    - _target_: pytorch_lightning.callbacks.EarlyStopping
+      monitor: "val/loss"
+      patience: 30
+      mode: "min"
+
 
 
