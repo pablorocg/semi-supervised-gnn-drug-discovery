@@ -1,0 +1,23 @@
+program: src/trainers/mean_teacher_trainer.py
+method: grid
+metric:
+  name: val/roc_auc
+  goal: maximize
+
+parameters:
+  lightning_module.init.ema_decay:
+    values: [0.997, 0.999]
+  
+  lightning_module.init.consistency_rampup_epochs:
+    values: [5, 10]
+  
+  lightning_module.init.max_consistency_weight:
+    values: [0.5, 1.0]
+
+# 2x2x2 = 8 total experiments
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - ${args_no_hyphens}

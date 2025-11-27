@@ -90,6 +90,29 @@ class MoleculeNetDataModule(pl.LightningDataModule):
                 f"Batch sizes: labeled={self.batch_size_train_labeled}, unlabeled={self.batch_size_train_unlabeled}"
             )
 
+    @staticmethod
+    def augment_graph(data):
+        """Apply random augmentation to graph for Mean Teacher"""
+        import random
+        import copy
+        
+        # Create a copy to avoid modifying original
+        data = copy.deepcopy(data)
+        
+        # 1. Random edge dropout (20%)
+        if random.random() < 0.3 and data.edge_index.size(1) > 0:
+            edge_mask = torch.rand(data.edge_index.size(1)) > 0.2
+            data.edge_index = data.edge_index[:, edge_mask]
+            if data.edge_attr is not None:
+                data.edge_attr = data.edge_attr[edge_mask]
+        
+        # 2. Random node feature noise (10% of features)
+        if random.random() < 0.3:
+            noise = torch.randn_like(data.x) * 0.1
+            data.x = data.x + noise
+        
+        return data
+
     def train_dataloader(self) -> CombinedLoader | DataLoader:
         if self.hparams.mode == "supervised":
             return CombinedLoader(
@@ -194,17 +217,10 @@ class MoleculeNetDataModule(pl.LightningDataModule):
     def task_type(self) -> str:
         return "classification"
 
+    
+
 
 if __name__ == "__main__":
-<<<<<<< HEAD
-    dm = MoleculeNetDataModule(num_workers=8)
-    dm.prepare_data()
-    dm.setup()
-    # train_loader = dm.train_dataloader()
-    # for batch in train_loader:
-    #     print(batch)
-    #     break
-=======
     dm = MoleculeNetDataModule(
         target=None,  # All 12 regression targets
         batch_size_train=2,
@@ -216,7 +232,6 @@ if __name__ == "__main__":
         mode="supervised",
         name="tox21",
     )
->>>>>>> origin/main
 
     dm.setup()
     

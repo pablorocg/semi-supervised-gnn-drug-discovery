@@ -1,4 +1,6 @@
 import logging
+import copy
+import random
 
 import pytorch_lightning as L
 import torch
@@ -54,13 +56,11 @@ class MeanTeacherModule(L.LightningModule):
         else:
             self.student = model
 
+        ema_decay = self.hparams.ema_decay
         # EMA Setup
         self.teacher = AveragedModel(
             self.student,
-            avg_fn=lambda averaged_model_parameter,
-            model_parameter,
-            num_averaged: ema_decay * averaged_model_parameter
-            + (1 - ema_decay) * model_parameter,
+            avg_fn=lambda avg_param, model_param, num_averaged: ema_decay * avg_param + (1 - ema_decay) * model_param
         )
 
         # Loss configuration
@@ -92,66 +92,92 @@ class MeanTeacherModule(L.LightningModule):
         labels: torch.Tensor,
         consistency_weight: float,
         pos_weights: torch.Tensor = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Stateless, JIT-friendly loss calculation.
-        """
-        # 1. Supervised Loss (Masked BCE) - Only on labeled data
-        num_labeled = labels.shape[0]
-        student_labeled = student_logits[:num_labeled]
-
+    ):
+        # Supervised loss
         is_labeled = ~torch.isnan(labels)
-
-        # Replace NaNs with 0 to prevent NaN propagation in BCE
         safe_labels = torch.where(is_labeled, labels, torch.zeros_like(labels))
 
         loss_matrix = F.binary_cross_entropy_with_logits(
-            student_labeled,
+            student_logits[:labels.shape[0]],
             safe_labels,
             reduction="none",
             pos_weight=pos_weights,
         )
+        supervised_loss = (loss_matrix * is_labeled.float()).sum() / (is_labeled.sum() + 1e-8)
 
-        # Apply mask and normalize
-        masked_loss = loss_matrix * is_labeled.float()
-        supervised_loss = masked_loss.sum() / (is_labeled.sum() + 1e-8)
-
-        # 2. Consistency Loss (MSE on Sigmoids) - On ALL data
-        cons_loss = F.mse_loss(
-            torch.sigmoid(student_logits), torch.sigmoid(teacher_logits)
-        )
+        # Consistency loss - MSE on probabilities
+        student_probs = torch.sigmoid(student_logits)
+        teacher_probs = torch.sigmoid(teacher_logits).detach()
+        cons_loss = F.mse_loss(student_probs, teacher_probs)
+        
         weighted_cons_loss = consistency_weight * cons_loss
-
         total_loss = supervised_loss + weighted_cons_loss
 
         return total_loss, supervised_loss, weighted_cons_loss
 
-    def training_step(self, batch, batch_idx):
-        # Validate batch structure
+    def augment_batch(self, batch):
+        """Apply augmentation to a batch of graphs."""
+        from torch_geometric.data import Batch
+        if hasattr(batch, "batch"):
+            data_list = batch.to_data_list()
+            aug_list = [self._augment_single_graph(g) for g in data_list]
+            return Batch.from_data_list(aug_list)
+        else:
+            return self._augment_single_graph(batch)
 
+    @staticmethod
+    def _augment_single_graph(data):
+        """Augment a single graph"""
+        data = copy.deepcopy(data)
+        
+        # Random edge dropout
+        if random.random() < 0.3 and data.edge_index.size(1) > 0:
+            edge_mask = torch.rand(data.edge_index.size(1)) > 0.2
+            data.edge_index = data.edge_index[:, edge_mask]
+            if hasattr(data, 'edge_attr') and data.edge_attr is not None:
+                data.edge_attr = data.edge_attr[edge_mask]
+        
+        # Random node feature noise (only if features are float type)
+        if random.random() < 0.3:
+            if data.x.dtype in [torch.float, torch.float32, torch.float64]:
+                noise = torch.randn_like(data.x) * 0.1
+                data.x = data.x + noise
+            # else:
+            #     mask = torch.rand(data.x.shape) > 0.1
+            #     data.x = data.x * mask.long()
+        
+        return data
+
+    def training_step(self, batch, batch_idx):
         labeled = batch["labeled"]
         unlabeled = batch["unlabeled"]
-
+        
+        # Apply augmentations
+        labeled_student = self.augment_batch(labeled)
+        unlabeled_student = self.augment_batch(unlabeled)
+        
+        labeled_teacher = self.augment_batch(labeled)
+        unlabeled_teacher = self.augment_batch(unlabeled)
+        
         # Student Forward
-        pred_l_student = self.student(labeled)  # [num_labeled, num_tasks]
-        pred_u_student = self.student(unlabeled)  # [num_unlabeled, num_tasks]
-        all_preds_student = torch.cat(
-            [pred_l_student, pred_u_student], dim=0
-        )  # [num_labeled + num_unlabeled, num_tasks]
-
-        # Teacher Forward (Inference Mode + EMA)
+        pred_l_student = self.student(labeled_student)
+        pred_u_student = self.student(unlabeled_student)
+        
+        
+        all_preds_student = torch.cat([pred_l_student, pred_u_student], dim=0)
+        
+        # Teacher Forward
         with torch.inference_mode():
-            pred_l_teacher = self.teacher(labeled)
-            pred_u_teacher = self.teacher(unlabeled)
+            pred_l_teacher = self.teacher(labeled_teacher)
+            pred_u_teacher = self.teacher(unlabeled_teacher)
             all_preds_teacher = torch.cat([pred_l_teacher, pred_u_teacher], dim=0)
-
-        # # Align Labels
+        
+        # Labels (only for labeled data)
         labels = labeled.y
         
-
         # Get Consistency Weight
         curr_cons_weight = self._get_consistency_weight()
-
+        
         # Compute Loss
         loss, sup_loss, cons_loss = self.compute_loss(
             all_preds_student,
@@ -160,35 +186,47 @@ class MeanTeacherModule(L.LightningModule):
             curr_cons_weight,
             self.pos_weights,
         )
+        
+        batch_size = labeled.num_graphs
 
-        self.train_metrics(pred_l_student.float(), labels.float())
+        self.train_metrics.update(pred_l_student.float(), labels.float())
+        
+        # Logging
         self.log_dict(
             {
                 "train/loss": loss,
                 "train/sup_loss": sup_loss,
                 "train/cons_loss": cons_loss,
                 "train/cons_weight": curr_cons_weight,
+                "train/pred_disagreement": (all_preds_student - all_preds_teacher).abs().mean(),
             },
             on_step=True,
             on_epoch=True,
             prog_bar=True,
+            batch_size=batch_size
         )
-
+        
         return loss
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
-        self.teacher.update_parameters(self.student)
+        # Only update teacher every N steps for stability
+        if self.global_step % 1 == 0:  # Can increase to 2-5 for more stability
+            self.teacher.update_parameters(self.student)
 
     def on_train_epoch_end(self):
-
         self._log_metrics(self.train_metrics)
-        if self.current_epoch % 10 == 0:  
+        
+        """ # Update teacher BN stats every 5 epochs
+        if self.current_epoch % 5 == 0:
+            # Convert Lightning's device string to torch.device
+            device = torch.device(self.device) if isinstance(self.device, str) else self.device
             
             update_bn(
                 self.trainer.train_dataloader,
                 self.teacher,
-                device=self.device
-            )
+                device=device
+            ) """
+            
 
     def validation_step(self, batch, batch_idx):
         return self._shared_eval_step(batch, self.val_metrics, "val")
@@ -197,12 +235,9 @@ class MeanTeacherModule(L.LightningModule):
         return self._shared_eval_step(batch, self.test_metrics, "test")
 
     def _shared_eval_step(self, batch, metric_collection, prefix):
-        """Unified evaluation logic handling NaNs correctly."""
-
-        # Use EMA parameters for evaluation
-        preds = self.teacher(batch)
-
+        preds = self.teacher.module(batch)
         labels = batch.y
+
 
         is_labeled = ~torch.isnan(labels)
         safe_labels = torch.where(is_labeled, labels, torch.zeros_like(labels))
@@ -212,7 +247,9 @@ class MeanTeacherModule(L.LightningModule):
         )
         loss = (loss_matrix * is_labeled.float()).sum() / (is_labeled.sum() + 1e-8)
 
-        # Update metrics (Cast to float32)
+        batch_size = batch.num_graphs
+
+        # Update metrics 
         metric_collection(preds.float(), labels.float())
 
         self.log(
@@ -222,27 +259,28 @@ class MeanTeacherModule(L.LightningModule):
             on_epoch=True,
             prog_bar=True,
             sync_dist=True,
+            batch_size=batch_size
         )
         return loss
 
-    def _get_consistency_weight(self) -> float:
-        """Computes sigmoid ramp-up weight."""
-        if self.hparams.consistency_rampup_epochs == 0:
-            return self.hparams.max_consistency_weight
 
-        # Steps calculation
-        max_steps = self.hparams.consistency_rampup_epochs * (
+
+    def _get_consistency_weight(self) -> float:
+        """Linear ramp-up (more stable than sigmoid)."""
+        ramp_epochs = self.hparams.consistency_rampup_epochs
+        if ramp_epochs == 0:
+            return float(self.hparams.max_consistency_weight)
+
+        max_steps = ramp_epochs * max(1,
             self.trainer.estimated_stepping_batches // self.trainer.max_epochs
         )
 
         if self.global_step >= max_steps:
-            return self.hparams.max_consistency_weight
+            return float(self.hparams.max_consistency_weight)
 
-        # Sigmoid ramp-up
-        phase = 1.0 - (self.global_step / max_steps)
+        # Linear ramp-up
         return float(
-            self.hparams.max_consistency_weight
-            * torch.exp(torch.tensor(-5.0 * phase * phase))
+            self.hparams.max_consistency_weight * (self.global_step / max_steps)
         )
 
     def configure_optimizers(self):
@@ -274,7 +312,7 @@ class MeanTeacherModule(L.LightningModule):
             optimizer,
             schedulers=[
                 LinearLR(optimizer, start_factor=1e-3, total_iters=warmup_steps),
-                CosineAnnealingLR(optimizer, T_max=total_steps - warmup_steps),
+                CosineAnnealingLR(optimizer, T_max=max(1,(total_steps - warmup_steps))),
             ],
             milestones=[warmup_steps],
         )
@@ -303,10 +341,7 @@ class MeanTeacherModule(L.LightningModule):
         state_dict = torch.load(weights_path, map_location="cpu")
         self.student.load_state_dict(state_dict)
         log.info(f"Loaded weights from {weights_path}")
-
-  
         
-
     def on_validation_epoch_end(self):
         self._log_metrics(self.val_metrics)
 

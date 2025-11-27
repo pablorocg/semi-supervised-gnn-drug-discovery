@@ -4,7 +4,7 @@ init:
   _target_: src.models.nets.gine_v2.GINEv2
   _recursive_: false        
   embedding_dim: 16 # 256      
-  hidden_channels: 256   
+  hidden_channels: 128 # 256   
   encoder_num_heads: 4     # 256 / 4 = 64 dim per head
   encoder_dropout: 0.1    
   num_gnn_layers: 4        

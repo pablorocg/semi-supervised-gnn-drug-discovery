@@ -20,7 +20,7 @@ force_deterministic: true
 
 dataset:
   init:
-    name: "pcba"
+    name: "tox21"
     splits: [0.3, 0.50, 0.1, 0.1]
     mode: "supervised"
     batch_size_train: 256

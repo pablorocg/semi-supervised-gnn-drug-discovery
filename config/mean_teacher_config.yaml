@@ -14,34 +14,40 @@ force_deterministic: true
 
 # Override configuration for specific components
 # This is how it looks up the dataset config file
-# # configs/dataset/moleculenet.yaml
+# configs/lightning_module/mean_teacher.yaml
+name: "mean_teacher"
 
-# name: "moleculenet"
+init:
+  _target_: src.lightning_modules.mean_teacher.MeanTeacherModule
+  learning_rate: 5e-5
+  warmup_epochs: 75
+  cosine_period_ratio: 0.5
+  compile: false
+  weights: null
+  optimizer: "adamw"
+  weight_decay: 1e-3
+  nesterov: true
+  momentum: 0.99
+  
+  # Mean Teacher specific hyperparameters
+  ema_decay: 0.999  # Try: [0.99, 0.995, 0.999]
+  consistency_rampup_epochs: 10  # Try: [5, 10, 20]
+  max_consistency_weight: 0.5  # Try: [0.1, 1.0, 5.0, 10.0]
+  
+  validate_features: true
 
-# init:
-#   _target_: src.data.moleculenet.MoleculeNetDataModule
-#   target: null  
-#   batch_size_train: 32
-#   batch_size_inference: 64
-#   num_workers: 4
-#   splits: [0.40, 0.40, 0.1, 0.1]
-#   seed: 42
-#   subset_size: null  # Use null for full dataset or int for subset
-#   data_augmentation: false
-#   mode: "supervised"
-#   name: "tox21"  
+    # Experiments:
+    # [0.72, 0.08, 0.1, 0.1] x 
+    # [0.65, 0.15, 0.1, 0.1] x 
+    # [0.50, 0.30, 0.1, 0.1] x 
+    # [0.30, 0.50, 0.1, 0.1]
 
-#   # Experiments:
-#   # [0.72, 0.08, 0.1, 0.1] x 
-#   # [0.65, 0.15, 0.1, 0.1] x 
-#   # [0.50, 0.30, 0.1, 0.1] x 
-#   # [0.30, 0.50, 0.1, 0.1]
-
+# Current overrides applied by the user:
 dataset:
   init:
-    splits: [0.4, 0.4, 0.1]
-    mode: "semisupervised"
-    batch_size_train: 16
+    splits: [0.35, 0.35, 0.2, 0.1] # This overrides the splits from the above block
+    mode: "semisupervised" # This overrides the mode from the above block
+    batch_size_train: 16 # This overrides the batch_size_train from the above block
 
 
 # Hydra configuration 
