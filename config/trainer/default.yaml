@@ -2,7 +2,7 @@
 
 init:
   _target_: pytorch_lightning.Trainer
-  max_epochs: 1000
+  max_epochs: 250
   accelerator: "auto"
   devices: 1
   precision: "bf16-mixed"
@@ -18,8 +18,8 @@ init:
   
   callbacks:
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint
-      monitor: "val/loss"
-      mode: "min"
+      monitor: "val/ap"
+      mode: "max"
       save_top_k: 1         
       save_last: false      
       filename: "best"
@@ -34,10 +34,10 @@ init:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: "epoch"
 
-    - _target_: pytorch_lightning.callbacks.EarlyStopping
-      monitor: "val/loss"
-      patience: 30
-      mode: "min"
+    # - _target_: pytorch_lightning.callbacks.EarlyStopping
+    #   monitor: "val/loss"
+    #   patience: 30
+    #   mode: "min"
 
 
 
