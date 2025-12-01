@@ -3,8 +3,8 @@
 wandb:
   _target_: pytorch_lightning.loggers.WandbLogger
   name: "${dataset.name}_${model.name}_${now:%Y-%m-%d_%H-%M-%S}"  
-  project: "molecule-property-prediction"  
-  save_dir: "${oc.env:LOGS_DIR,./logs}" 
+  project: "GINE_Tox21_Experiments"  
+  save_dir: "${oc.env:LOGS_DIR}" 
   offline: false
   log_model: false
   tags:  

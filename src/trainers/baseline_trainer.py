@@ -1,20 +1,15 @@
 import hydra
-import torch
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger
-from src.data.moleculenet import MoleculeNetDataModule
-from src.data.pcba import OgbgMolPcbaDataModule
-from src.data.qm9 import QM9DataModule
-from src.lightning_modules.baseline import BaselineModule
 from src.utils.path_utils import get_configs_dir
 from pytorch_lightning import seed_everything
 
 
 @hydra.main(
     config_path=get_configs_dir(),
-    config_name="baseline_config.yaml",
+    config_name="baseline_config",
     version_base="1.3",
 )
 def main(cfg: DictConfig) -> None:
@@ -25,39 +20,37 @@ def main(cfg: DictConfig) -> None:
     # Set seed for reproducibility
     seed_everything(cfg.seed, workers=True)
 
-    # Instantiate datamodule based on dataset name
-    if cfg.dataset.name == "QM9":
-        dm = instantiate(cfg.dataset.init, _target_=QM9DataModule)
-    elif cfg.dataset.name == "ogbg-molpcba":
-        dm = instantiate(cfg.dataset.init, _target_=OgbgMolPcbaDataModule)
-    else:
-        dm = instantiate(cfg.dataset.init, _target_=MoleculeNetDataModule)
-
+    dm = instantiate(cfg.dataset.init)
     dm.setup("fit")
 
     # Get dataset properties
-    n_outputs = dm.num_tasks
     task_type = dm.task_type
-    in_channels = dm.num_features
+    num_node_features = dm.num_node_features
+    num_edge_features = dm.num_edge_features
+    num_tasks = dm.num_tasks
 
-    print(
-        f"Number of input features: {in_channels}, type of task: {task_type}, number of outputs: {n_outputs}"
-    )
+    print("Dataset properties:")
+    print(f"Task type: {task_type}")
+    print(f"Number of node features: {num_node_features}")
+    print(f"Number of edge features: {num_edge_features}")
+    print(f"Number of tasks: {num_tasks}")
+
+    print("Model properties:")
+    print(f"Model name: {cfg.model.name}")
 
     # Instantiate model
     model = instantiate(
         cfg.model.init,
-        in_channels=in_channels,
-        out_channels=n_outputs
+        dataset=cfg.dataset.name,
+        num_tasks=num_tasks,
     )
-
+    
     # Create lightning module
     lightning_module = instantiate(
         cfg.lightning_module.init,
-        _target_=BaselineModule,
         model=model,
-        num_outputs=n_outputs,
-        task_type=task_type,
+        num_outputs=num_tasks,
+        loss_weights=dm.get_pos_weights(),
     )
 
     # Setup logger
@@ -72,7 +65,17 @@ def main(cfg: DictConfig) -> None:
 
     # Train and test
     trainer.fit(model=lightning_module, datamodule=dm)
-    # trainer.test(model=lightning_module, datamodule=dm)
+    
+    trainer.test(model=lightning_module, datamodule=dm)
+
+
+    # Load best checkpoint before testing
+    best_model_path = trainer.checkpoint_callback.best_model_path
+    print(f"Loading best model from: {best_model_path}")
+
+    lightning_module = lightning_module.load_weights(best_model_path)
+
+    trainer.test(model=lightning_module, datamodule=dm)
 
 
 if __name__ == "__main__":

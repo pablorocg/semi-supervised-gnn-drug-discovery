@@ -1,0 +1,13 @@
+# configs/model/gine.yaml
+
+name: "GINEv2"
+
+init:
+  _target_: src.models.nets.gine.GINE
+  _recursive_: false
+  embedding_dim: 32
+  hidden_channels: 256
+  num_layers: 2
+  dropout: 0.5
+
+  

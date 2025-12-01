@@ -4,13 +4,21 @@ name: "moleculenet"
 
 init:
   _target_: src.data.moleculenet.MoleculeNetDataModule
-  target: null  # Moleculenet targets: 0-127
+  target: null  
   batch_size_train: 32
   batch_size_inference: 64
   num_workers: 4
-  splits: [0.72, 0.08, 0.1, 0.1]
+  splits: [0.40, 0.40, 0.1, 0.1]
   seed: 42
   subset_size: null  # Use null for full dataset or int for subset
   data_augmentation: false
-  mode: "semisupervised"
+  mode: null
   name: "tox21"  
+
+  # Experiments:
+  # [0.72, 0.08, 0.1, 0.1] x 
+  # [0.65, 0.15, 0.1, 0.1] x 
+  # [0.50, 0.30, 0.1, 0.1] x 
+  # [0.30, 0.50, 0.1, 0.1]
+  
+

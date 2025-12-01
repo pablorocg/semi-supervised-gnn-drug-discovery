@@ -1,0 +1,21 @@
+# configs/hpo_config.yaml
+
+defaults:
+  - dataset: moleculenet  # Options: qm9, moleculenet, ogbg
+  - model: encoded_gine  # Options: gin, gcn, gnn, gine
+  - lightning_module: baseline
+  - trainer: hpo
+  - logger: wandb
+  - _self_  
+
+# General settings
+seed: 42
+force_deterministic: true
+
+# Hydra configuration 
+hydra:
+  run:
+    dir: ${oc.env:LOGS_DIR}/hydra/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: ${oc.env:LOGS_DIR}/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}

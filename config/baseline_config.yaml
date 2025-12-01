@@ -1,8 +1,8 @@
 # configs/baseline_config.yaml
 
 defaults:
-  - dataset: moleculenet  # Options: qm9, moleculenet, ogbg
-  - model: gcn  # Options: gin, gcn, gnn
+  - dataset: moleculenet  # Options: moleculenet, ogbg
+  - model: ginev2  # Options: gine
   - lightning_module: baseline
   - trainer: default
   - logger: wandb
@@ -11,6 +11,20 @@ defaults:
 # General settings
 seed: 42
 force_deterministic: true
+
+#   # Experiments:
+#   # [0.72, 0.08, 0.1, 0.1] x 
+#   # [0.65, 0.15, 0.1, 0.1] x 
+#   # [0.50, 0.30, 0.1, 0.1] x 
+#   # [0.30, 0.50, 0.1, 0.1]
+
+dataset:
+  init:
+    name: "pcba"
+    splits: [0.3, 0.50, 0.1, 0.1]
+    mode: "supervised"
+    batch_size_train: 256
+
 
 # Hydra configuration 
 hydra:
