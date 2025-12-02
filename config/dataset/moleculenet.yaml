@@ -10,6 +10,7 @@ init:
   num_workers: 4
   splits: [0.40, 0.40, 0.1, 0.1]
   seed: 42
+  mu: 22
   subset_size: null  # Use null for full dataset or int for subset
   data_augmentation: false
   mode: null

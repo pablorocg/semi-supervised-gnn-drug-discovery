@@ -1,11 +1,15 @@
 import logging
+
 import hydra
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning import Trainer, seed_everything
+from pytorch_lightning.loggers import WandbLogger
+
 from src.utils.path_utils import get_configs_dir
 
 log = logging.getLogger(__name__)
+
 
 @hydra.main(
     config_path=get_configs_dir(),
@@ -20,9 +24,7 @@ def main(cfg: DictConfig) -> None:
     # Set seed for reproducibility
     seed_everything(cfg.seed, workers=True)
 
-    # 1. Instantiate DataModule
     dm = instantiate(cfg.dataset.init)
-    # dm.prepare_data() # Ensure data is downloaded
     dm.setup("fit")
 
     # Get dataset properties
@@ -38,15 +40,14 @@ def main(cfg: DictConfig) -> None:
     log.info(f"Number of tasks: {num_tasks}")
     log.info(f"Model name: {cfg.model.name}")
 
-    # 2. Instantiate Backbone Model
-    # We pass num_tasks here as the backbone often needs output dim
+    # Instantiate model
     model = instantiate(
         cfg.model.init,
+        dataset=cfg.dataset.name,
         num_tasks=num_tasks,
     )
 
-    # 3. Instantiate Lightning Module
-    # FIX: Point to .init so Hydra finds the _target_ class
+    # Create lightning module
     lightning_module = instantiate(
         cfg.lightning_module.init,
         model=model,
@@ -55,23 +56,28 @@ def main(cfg: DictConfig) -> None:
     )
 
     # Setup logger
-    logger = instantiate(cfg.logger.wandb)
+    logger = instantiate(cfg.logger.wandb, _target_=WandbLogger)
 
     # Instantiate trainer
     trainer = instantiate(
         cfg.trainer.init,
+        _target_=Trainer,
         logger=logger,
     )
 
-    # 4. Train
-    log.info("Starting training...")
+    # Train and test
     trainer.fit(model=lightning_module, datamodule=dm)
-    
-    # 5. Test
-    # This automatically loads the best checkpoint tracked by ModelCheckpoint
-    # No need for manual state_dict loading
-    log.info("Starting testing with best model...")
-    trainer.test(datamodule=dm, ckpt_path="best")
+
+    trainer.test(model=lightning_module, datamodule=dm)
+
+    # # Load best checkpoint before testing
+    # best_model_path = trainer.checkpoint_callback.best_model_path
+    # print(f"Loading best model from: {best_model_path}")
+
+    # lightning_module = lightning_module.load_weights(best_model_path)
+
+    # trainer.test(model=lightning_module, datamodule=dm)
+
 
 if __name__ == "__main__":
     main()

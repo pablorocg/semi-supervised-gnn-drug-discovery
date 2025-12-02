@@ -8,7 +8,8 @@ from src.utils.dataset_utils import (
     GetTarget,
 )
 from src.utils.path_utils import get_data_dir
-
+import numpy as np
+from iterstrat.ml_stratifiers import MultilabelStratifiedShuffleSplit
 
 class MoleculeNetDataModule(pl.LightningDataModule):
     def __init__(
@@ -19,7 +20,7 @@ class MoleculeNetDataModule(pl.LightningDataModule):
         num_workers: int = 0,
         splits: list[int] | list[float] = [0.72, 0.08, 0.1, 0.1],
         seed: int = 0,
-        mu: int = 5,
+        mu = 5,
         subset_size: int | None = None,
         data_augmentation: bool = False,  # Unused but here for compatibility
         name: str = "PCBA",
@@ -35,40 +36,123 @@ class MoleculeNetDataModule(pl.LightningDataModule):
         MoleculeNet(root=self.data_dir, name=self.hparams.name)
 
     def setup(self, stage: str | None = None) -> None:
+        print(f"Loading {self.hparams.name} dataset...")
         dataset = MoleculeNet(
             root=self.data_dir,
             name=self.hparams.name,
             transform=GetTarget(self.hparams.target),
         )
 
-        # Shuffle dataset
-        rng = np.random.default_rng(seed=self.hparams.seed)
-        self.dataset = dataset[rng.permutation(len(dataset))]
+        # 1. Parse Split Ratios
+        # Expected order from your list: [Unlabeled, Labeled, Val, Test]
+        if all([isinstance(split, float) for split in self.hparams.splits]):
+            ratios = self.hparams.splits
+        else:
+            # Convert ints to ratios
+            total = len(dataset)
+            ratios = [x / total for x in self.hparams.splits]
+
+        # 2. Get Stratified Indices
+        # We pass the full label matrix Y. 
+        # CAUTION: MoleculeNet has NaNs. We treat NaNs as negative (0) for stratification 
+        # purposes, ensuring we stratify based on KNOWN positives.
+        y_all = dataset.y.cpu().numpy()
+        y_all = np.nan_to_num(y_all, nan=0.0)
+
+        # Perform the chained split
+        print(f"Calculating stratified splits for {len(dataset)} samples...")
+        indices = self._get_stratified_indices(y_all, ratios, seed=self.hparams.seed)
+
+        # 3. Assign Subsets
+        self.data_train_unlabeled = dataset[indices["unlabeled"]]
+        self.data_train_labeled   = dataset[indices["labeled"]]
+        self.data_val             = dataset[indices["val"]]
+        self.data_test            = dataset[indices["test"]]
+
+        # 4. Critical Safety Check for Exp 4
+        self._check_label_integrity()
         
-        # Subset dataset
-        if self.hparams.subset_size is not None:
-            self.dataset = self.dataset[: self.hparams.subset_size]
-
-        # Split dataset
-        if all([isinstance(split, int) for split in self.hparams.splits]):
-            split_sizes = self.hparams.splits
-        elif all([isinstance(split, float) for split in self.hparams.splits]):
-            split_sizes = [int(len(dataset) * prop) for prop in self.hparams.splits]
-
-        split_idx = np.cumsum(split_sizes)
-
-        self.data_train_labeled = self.dataset[split_idx[0] : split_idx[1]]
-
-        if self.hparams.mode == "semisupervised":
-            self.data_train_unlabeled = self.dataset[: split_idx[0]]
-        
-        self.data_val = self.dataset[split_idx[1] : split_idx[2]]
-        self.data_test = self.dataset[split_idx[2] :]
-
+        # 5. Apply Mu Ratio & Print Info
         self.batch_size_train_labeled = self.hparams.batch_size_train
         self.batch_size_train_unlabeled = self.hparams.batch_size_train * self.hparams.mu
         
         self.print_dataset_info()
+
+    def _get_stratified_indices(self, y, ratios, seed):
+        """
+        Performs chained iterative stratification.
+        Ratios order assumed: [Unlabeled, Labeled, Val, Test]
+        """
+        # Map ratios to names for clarity
+        r_unlabeled, r_labeled, r_val, r_test = ratios
+        
+        # We work with an array of indices [0, 1, ... N]
+        all_indices = np.arange(len(y))
+        
+        # --- SPLIT 1: Separate TEST from REST ---
+        # Test size relative to total
+        test_split = MultilabelStratifiedShuffleSplit(
+            n_splits=1, test_size=r_test, random_state=seed
+        )
+        # split returns indices relative to the input array
+        rest_idx_local, test_idx_local = next(test_split.split(all_indices, y))
+        
+        # Map back to global indices
+        idx_test = all_indices[test_idx_local]
+        idx_rest = all_indices[rest_idx_local]
+        y_rest = y[idx_rest]
+
+        # --- SPLIT 2: Separate VAL from TRAIN_TOTAL ---
+        # Val size relative to the REST (Total - Test)
+        # Math: 0.1 / (1.0 - 0.2) = 0.1 / 0.8 = 0.125
+        val_rel_size = r_val / (1.0 - r_test)
+        
+        val_split = MultilabelStratifiedShuffleSplit(
+            n_splits=1, test_size=val_rel_size, random_state=seed
+        )
+        train_total_idx_local, val_idx_local = next(val_split.split(idx_rest, y_rest))
+        
+        idx_val = idx_rest[val_idx_local]
+        idx_train_total = idx_rest[train_total_idx_local]
+        y_train_total = y[idx_train_total]
+
+        # --- SPLIT 3: Separate LABELED from UNLABELED ---
+        # Labeled size relative to TRAIN_TOTAL
+        # Math for Exp 4: 0.03 / (0.03 + 0.67) = 0.03 / 0.70 = ~0.0428
+        labeled_rel_size = r_labeled / (r_labeled + r_unlabeled)
+        
+        # Safety clamp for float precision issues
+        if labeled_rel_size <= 0: labeled_rel_size = 0.0
+        if labeled_rel_size >= 1: labeled_rel_size = 1.0
+
+        label_split = MultilabelStratifiedShuffleSplit(
+            n_splits=1, test_size=labeled_rel_size, random_state=seed
+        )
+        unlabeled_idx_local, labeled_idx_local = next(label_split.split(idx_train_total, y_train_total))
+        
+        idx_labeled = idx_train_total[labeled_idx_local]
+        idx_unlabeled = idx_train_total[unlabeled_idx_local]
+
+        return {
+            "unlabeled": idx_unlabeled,
+            "labeled": idx_labeled,
+            "val": idx_val,
+            "test": idx_test
+        }
+
+    def _check_label_integrity(self):
+        """Verifies that the labeled set is not degenerate."""
+        y_labeled = self.data_train_labeled.y.float()
+        # Treat NaNs as 0 for counting
+        y_labeled = torch.nan_to_num(y_labeled, nan=0.0)
+        
+        pos_counts = y_labeled.sum(dim=0)
+        dead_tasks = (pos_counts == 0).sum().item()
+        
+        if dead_tasks > 0:
+            print(f"\n[WARNING] Stratification Warning: {dead_tasks}/{y_labeled.shape[1]} tasks have ZERO positive samples in the labeled set.")
+            print(f"Labeled Set Size: {len(self.data_train_labeled)}")
+            print("This is expected for very rare tasks in Exp 4, but limits supervised signal.\n")
 
 
     def print_dataset_info(self) -> None:
@@ -150,9 +234,8 @@ class MoleculeNetDataModule(pl.LightningDataModule):
 
 
     def get_pos_weights(self):
-    # dataset.y is usually size [num_graphs, n_tasks]
-    # Convert to float and handle NaNs if necessary for counting
-        labels = self.dataset.y.float()
+    
+        labels = self.data_train_labeled.y.float()
         
         weights = []
         for i in range(labels.shape[1]):

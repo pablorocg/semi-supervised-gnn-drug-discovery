@@ -2,16 +2,25 @@
 init:
   _target_: src.lightning_modules.mean_teacher.MeanTeacherModule
   learning_rate: 0.0005
-  warmup_epochs: 500
-  cosine_period_ratio: 0.5
+  optimizer: adamw
+  warmup_epochs: 75
+  cosine_period_ratio: 1.0
   compile: false
   weights: null
-  optimizer: adamw
-  weight_decay: 1e-4
+  weight_decay: 1e-3
   nesterov: true
   momentum: 0.9
-  loss_weights: null
+  
+  # EMA & Consistency
   ema_decay: 0.99
-  consistency_rampup_epochs: 5
+  ema_update_freq: 1  
+  consistency_rampup_epochs: 200
   max_consistency_weight: 1.0
- 
+  rampup_schedule: "sigmoid"  # Options: 'linear' or 'sigmoid' 
+
+
+
+        
+        
+        
+

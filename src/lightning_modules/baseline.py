@@ -16,7 +16,6 @@ from src.utils.ogb_metrics import (
     MultitaskROC_AUC,
 )
 
-
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 

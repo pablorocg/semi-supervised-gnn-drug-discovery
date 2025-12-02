@@ -39,9 +39,8 @@ force_deterministic: true
 
 dataset:
   init:
-    splits: [0.4, 0.4, 0.1]
     mode: "semisupervised"
-    batch_size_train: 16
+   
 
 
 # Hydra configuration 
