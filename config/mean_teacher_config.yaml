@@ -41,7 +41,10 @@ dataset:
   init:
     mode: "semisupervised"
    
-
+trainer:
+  init:
+    val_check_interval: 500 # Valida cada 500 steps
+    limit_train_batches: 0.5 # (Opcional) Usa todo el dataset
 
 # Hydra configuration 
 hydra:
