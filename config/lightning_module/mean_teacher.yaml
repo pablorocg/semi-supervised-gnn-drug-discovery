@@ -1,17 +1,51 @@
-# configs/lightning_module/baseline.yaml
+# Mean Teacher Module Configuration with Graph Augmentation
+
 init:
   _target_: src.lightning_modules.mean_teacher.MeanTeacherModule
+  
+  # Optimizer settings
   learning_rate: 0.0005
-  warmup_epochs: 500
+  warmup_epochs: 5  # FIXED: Was 500, should be ~5-10
   cosine_period_ratio: 0.5
-  compile: false
-  weights: null
   optimizer: adamw
   weight_decay: 1e-4
   nesterov: true
   momentum: 0.9
+  
+  # Model settings
+  compile: false
+  weights: null
   loss_weights: null
-  ema_decay: 0.99
-  consistency_rampup_epochs: 5
-  max_consistency_weight: 1.0
- 
+  
+  # Mean Teacher specific parameters
+  ema_decay: 0.999  # FIXED: Increased from 0.99 to 0.999 (paper recommendation)
+  consistency_rampup_epochs: 5  # Epochs to ramp up consistency weight
+  max_consistency_weight: 1.0   # Maximum weight for consistency loss
+  
+  # Graph Augmentation Parameters (NEW)
+  # These create different views of graphs for student/teacher
+  node_drop_rate: 0.1          # Probability of masking entire nodes
+  edge_drop_rate: 0.1          # Probability of dropping edges
+  feature_mask_rate: 0.1       # Probability of masking individual features
+  feature_noise_std: 0.01      # Std dev of Gaussian noise on node features
+  edge_attr_noise_std: 0.0     # Std dev of Gaussian noise on edge attributes (0 = disabled)
+
+# Recommended configurations for different scenarios:
+# 
+# Conservative (less augmentation):
+#   node_drop_rate: 0.05
+#   edge_drop_rate: 0.05
+#   feature_mask_rate: 0.05
+#   feature_noise_std: 0.005
+#
+# Moderate (default):
+#   node_drop_rate: 0.1
+#   edge_drop_rate: 0.1
+#   feature_mask_rate: 0.1
+#   feature_noise_std: 0.01
+#
+# Aggressive (more augmentation):
+#   node_drop_rate: 0.2
+#   edge_drop_rate: 0.2
+#   feature_mask_rate: 0.15
+#   feature_noise_std: 0.02

@@ -1,319 +1,295 @@
+"""Mean Teacher semi-supervised learning module."""
+
 import logging
+from typing import Optional
 
-import pytorch_lightning as L
+import pytorch_lightning as pl
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim import SGD, AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.optim.swa_utils import AveragedModel, update_bn
-from torchmetrics import MetricCollection
+from torchmetrics import AUROC, AveragePrecision, MeanMetric, MetricCollection
 
-from src.utils.ogb_metrics import (
-    MultitaskAveragePrecision,
-    MultitaskF1,
-    MultitaskPR_AUC,
-    MultitaskROC_AUC,
-)
+from src.utils.graph_augmentation import GraphAugmentor
 
 log = logging.getLogger(__name__)
 
 
-class MeanTeacherModule(L.LightningModule):
+class MeanTeacherModule(pl.LightningModule):
+    """Mean Teacher semi-supervised learning module."""
+
     def __init__(
         self,
-        model: torch.nn.Module,
+        model: nn.Module,
         num_outputs: int,
-        learning_rate: float = 1e-3,
+        learning_rate: float = 0.001,
         warmup_epochs: int = 5,
-        cosine_period_ratio: float = 1,
-        compile: bool = True,
-        weights: str = None,
+        cosine_period_ratio: float = 0.5,
         optimizer: str = "adamw",
-        weight_decay: float = 3e-5,
+        weight_decay: float = 0.0001,
         nesterov: bool = True,
-        momentum: float = 0.99,
-        loss_weights: torch.Tensor = None,
+        momentum: float = 0.9,
+        compile: bool = False,
+        weights: Optional[torch.Tensor] = None,
+        loss_weights: Optional[torch.Tensor] = None,
         ema_decay: float = 0.999,
         consistency_rampup_epochs: int = 5,
         max_consistency_weight: float = 1.0,
-        validate_features: bool = True,
+        node_drop_rate: float = 0.1,
+        edge_drop_rate: float = 0.1,
+        feature_mask_rate: float = 0.1,
+        feature_noise_std: float = 0.01,
+        edge_attr_noise_std: float = 0.0,
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
 
-        self.num_outputs = num_outputs
-
-        # Load weights if provided
-        if weights:
-            self.load_weights(weights)
-
-        # Compilation
-        if compile:
-            self.student = torch.compile(model, dynamic=True)
-            log.info("Student model compiled.")
-        else:
-            self.student = model
-
-        # EMA Setup
+        self.student = model
         self.teacher = AveragedModel(
-            self.student,
-            avg_fn=lambda averaged_model_parameter,
-            model_parameter,
-            num_averaged: ema_decay * averaged_model_parameter
-            + (1 - ema_decay) * model_parameter,
+            model, avg_fn=lambda avg, new, _: ema_decay * avg + (1 - ema_decay) * new
         )
 
-        # Loss configuration
-        self.register_buffer(
-            "pos_weights",
-            self.hparams.loss_weights
-            if self.hparams.loss_weights is not None
-            else None,
-        )
+        for teacher_param, student_param in zip(
+            self.teacher.parameters(), self.student.parameters()
+        ):
+            teacher_param.data.copy_(student_param.data)
 
-        # Metrics
+        self.augmentor = GraphAugmentor(
+            node_drop_rate=node_drop_rate,
+            edge_drop_rate=edge_drop_rate,
+            feature_mask_rate=feature_mask_rate,
+            feature_noise_std=feature_noise_std,
+            edge_attr_noise_std=edge_attr_noise_std,
+        )
+        log.info(f"Graph augmentation enabled: {self.augmentor}")
+
+        self.num_outputs = num_outputs
+        self.learning_rate = learning_rate
+        self.warmup_epochs = warmup_epochs
+        self.cosine_period_ratio = cosine_period_ratio
+        self.optimizer_name = optimizer
+        self.weight_decay = weight_decay
+        self.nesterov = nesterov
+        self.momentum = momentum
+        self.ema_decay = ema_decay
+        self.consistency_rampup_epochs = consistency_rampup_epochs
+        self.max_consistency_weight = max_consistency_weight
+
+        self.register_buffer("weights", weights)
+        self.register_buffer("loss_weights", loss_weights)
+
         self.train_metrics = self._configure_metrics("train")
         self.val_metrics = self._configure_metrics("val")
         self.test_metrics = self._configure_metrics("test")
 
-    def on_fit_start(self):
-        """Ensure EMA device placement."""
-        # Get device of student model
-        self.student.to(self.device)
-        self.teacher.to(self.device)
+        if compile:
+            self.student = torch.compile(self.student)
 
-    def forward(self, x):
-        return self.student(x)
-
-    @staticmethod
-    def compute_loss(
-        student_logits: torch.Tensor,
-        teacher_logits: torch.Tensor,
-        labels: torch.Tensor,
-        consistency_weight: float,
-        pos_weights: torch.Tensor = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Stateless, JIT-friendly loss calculation.
-        """
-        # 1. Supervised Loss (Masked BCE) - Only on labeled data
-        num_labeled = labels.shape[0]
-        student_labeled = student_logits[:num_labeled]
-
-        is_labeled = ~torch.isnan(labels)
-
-        # Replace NaNs with 0 to prevent NaN propagation in BCE
-        safe_labels = torch.where(is_labeled, labels, torch.zeros_like(labels))
-
-        loss_matrix = F.binary_cross_entropy_with_logits(
-            student_labeled,
-            safe_labels,
-            reduction="none",
-            pos_weight=pos_weights,
-        )
-
-        # Apply mask and normalize
-        masked_loss = loss_matrix * is_labeled.float()
-        supervised_loss = masked_loss.sum() / (is_labeled.sum() + 1e-8)
-
-        # 2. Consistency Loss (MSE on Sigmoids) - On ALL data
-        cons_loss = F.mse_loss(
-            torch.sigmoid(student_logits), torch.sigmoid(teacher_logits)
-        )
-        weighted_cons_loss = consistency_weight * cons_loss
-
-        total_loss = supervised_loss + weighted_cons_loss
-
-        return total_loss, supervised_loss, weighted_cons_loss
-
-    def training_step(self, batch, batch_idx):
-        # Validate batch structure
-
-        labeled = batch["labeled"]
-        unlabeled = batch["unlabeled"]
-
-        # Student Forward
-        pred_l_student = self.student(labeled)  # [num_labeled, num_tasks]
-        pred_u_student = self.student(unlabeled)  # [num_unlabeled, num_tasks]
-        all_preds_student = torch.cat(
-            [pred_l_student, pred_u_student], dim=0
-        )  # [num_labeled + num_unlabeled, num_tasks]
-
-        # Teacher Forward (Inference Mode + EMA)
-        with torch.inference_mode():
-            pred_l_teacher = self.teacher(labeled)
-            pred_u_teacher = self.teacher(unlabeled)
-            all_preds_teacher = torch.cat([pred_l_teacher, pred_u_teacher], dim=0)
-
-        # # Align Labels
-        labels = labeled.y
-        
-
-        # Get Consistency Weight
-        curr_cons_weight = self._get_consistency_weight()
-
-        # Compute Loss
-        loss, sup_loss, cons_loss = self.compute_loss(
-            all_preds_student,
-            all_preds_teacher,
-            labels,
-            curr_cons_weight,
-            self.pos_weights,
-        )
-
-        self.train_metrics(pred_l_student.float(), labels.float())
-        self.log_dict(
+    def _configure_metrics(self, prefix: str) -> MetricCollection:
+        """Configure metrics for training/validation/test."""
+        return MetricCollection(
             {
-                "train/loss": loss,
-                "train/sup_loss": sup_loss,
-                "train/cons_loss": cons_loss,
-                "train/cons_weight": curr_cons_weight,
+                "roc_auc": AUROC(task="multilabel", num_labels=self.num_outputs),
+                "ap": AveragePrecision(task="multilabel", num_labels=self.num_outputs),
+                "loss": MeanMetric(),
+                "sup_loss": MeanMetric(),
+                "cons_loss": MeanMetric(),
+                "cons_weight": MeanMetric(),
             },
-            on_step=True,
-            on_epoch=True,
-            prog_bar=True,
+            prefix=f"{prefix}/",
         )
+
+    def forward(self, data):
+        """Forward pass through student model."""
+        return self.student(data)
+
+    def _compute_loss(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Compute supervised loss with optional masking."""
+        if mask is not None:
+            loss = F.binary_cross_entropy_with_logits(
+                logits[mask], targets[mask], weight=self.weights, reduction="mean"
+            )
+        else:
+            loss = F.binary_cross_entropy_with_logits(
+                logits, targets, weight=self.weights, reduction="mean"
+            )
+
+        if self.loss_weights is not None:
+            loss = loss * self.loss_weights
 
         return loss
 
+    def _sigmoid_rampup(self, current_epoch: int) -> float:
+        """Sigmoid ramp-up function for consistency weight."""
+        if self.consistency_rampup_epochs == 0:
+            return 1.0
+        phase = 1.0 - current_epoch / self.consistency_rampup_epochs
+        return float(torch.exp(torch.tensor(-5.0 * phase * phase)))
+
+    def training_step(self, batch, batch_idx):
+        """Training step with Mean Teacher."""
+        labeled, unlabeled = batch
+
+        labeled_aug1 = self.augmentor(labeled)
+        unlabeled_aug1 = self.augmentor(unlabeled)
+        labeled_aug2 = self.augmentor(labeled)
+        unlabeled_aug2 = self.augmentor(unlabeled)
+
+        pred_l_student = self.student(labeled_aug1)
+        pred_u_student = self.student(unlabeled_aug1)
+
+        with torch.no_grad():
+            pred_l_teacher = self.teacher(labeled_aug2)
+            pred_u_teacher = self.teacher(unlabeled_aug2)
+
+        mask = ~torch.isnan(labeled.y)
+        supervised_loss = self._compute_loss(pred_l_student, labeled.y, mask)
+
+        consistency_loss_labeled = F.mse_loss(pred_l_student, pred_l_teacher)
+        consistency_loss_unlabeled = F.mse_loss(pred_u_student, pred_u_teacher)
+        consistency_loss = (consistency_loss_labeled + consistency_loss_unlabeled) / 2
+
+        consistency_weight = (
+            self._sigmoid_rampup(self.current_epoch) * self.max_consistency_weight
+        )
+
+        total_loss = supervised_loss + consistency_weight * consistency_loss
+
+        self.log("train/loss_step", total_loss, on_step=True, on_epoch=False, prog_bar=True)
+        self.log("train/sup_loss_step", supervised_loss, on_step=True, on_epoch=False, prog_bar=True)
+        self.log("train/cons_loss_step", consistency_loss, on_step=True, on_epoch=False, prog_bar=True)
+        self.log("train/cons_weight_step", consistency_weight, on_step=True, on_epoch=False, prog_bar=True)
+
+        self.train_metrics["loss"].update(total_loss)
+        self.train_metrics["sup_loss"].update(supervised_loss)
+        self.train_metrics["cons_loss"].update(consistency_loss)
+        self.train_metrics["cons_weight"].update(consistency_weight)
+
+        return total_loss
+
     def on_train_batch_end(self, outputs, batch, batch_idx):
+        """Update teacher model with EMA after each batch."""
         self.teacher.update_parameters(self.student)
 
     def on_train_epoch_end(self):
+        """Update batch normalization statistics for the teacher model."""
+        self.log("train/loss_epoch", self.train_metrics["loss"].compute())
+        self.log("train/sup_loss_epoch", self.train_metrics["sup_loss"].compute())
+        self.log("train/cons_loss_epoch", self.train_metrics["cons_loss"].compute())
+        self.log("train/cons_weight_epoch", self.train_metrics["cons_weight"].compute())
 
-        self._log_metrics(self.train_metrics)
-        if self.current_epoch % 10 == 0:  
-            
-            update_bn(
-                self.trainer.train_dataloader,
-                self.teacher,
-                device=self.device
-            )
+        self.train_metrics.reset()
+
+        if (self.current_epoch + 1) % 10 == 0:
+            log.info(f"Updating teacher batch norm at epoch {self.current_epoch}")
+
+            try:
+                device = next(self.student.parameters()).device
+            except StopIteration:
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+            if isinstance(device, str):
+                device = torch.device(device)
+
+            try:
+                update_bn(self.trainer.train_dataloader, self.teacher.module, device=device)
+            except Exception as e:
+                log.warning(f"Failed to update batch norm: {e}")
 
     def validation_step(self, batch, batch_idx):
-        return self._shared_eval_step(batch, self.val_metrics, "val")
+        """Validation step using teacher model."""
+        pred = self.teacher(batch)
+        mask = ~torch.isnan(batch.y)
+        loss = self._compute_loss(pred, batch.y, mask)
 
-    def test_step(self, batch, batch_idx):
-        return self._shared_eval_step(batch, self.test_metrics, "test")
+        self.val_metrics["loss"].update(loss)
 
-    def _shared_eval_step(self, batch, metric_collection, prefix):
-        """Unified evaluation logic handling NaNs correctly."""
+        pred_probs = torch.sigmoid(pred)
+        target_clean = torch.where(torch.isnan(batch.y), torch.zeros_like(batch.y), batch.y).long()
 
-        # Use EMA parameters for evaluation
-        preds = self.teacher(batch)
+        if mask.any():
+            self.val_metrics["roc_auc"].update(pred_probs, target_clean)
+            self.val_metrics["ap"].update(pred_probs, target_clean)
 
-        labels = batch.y
-
-        is_labeled = ~torch.isnan(labels)
-        safe_labels = torch.where(is_labeled, labels, torch.zeros_like(labels))
-
-        loss_matrix = F.binary_cross_entropy_with_logits(
-            preds, safe_labels, reduction="none", pos_weight=self.pos_weights
-        )
-        loss = (loss_matrix * is_labeled.float()).sum() / (is_labeled.sum() + 1e-8)
-
-        # Update metrics (Cast to float32)
-        metric_collection(preds.float(), labels.float())
-
-        self.log(
-            f"{prefix}/loss",
-            loss,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            sync_dist=True,
-        )
         return loss
 
-    def _get_consistency_weight(self) -> float:
-        """Computes sigmoid ramp-up weight."""
-        if self.hparams.consistency_rampup_epochs == 0:
-            return self.hparams.max_consistency_weight
+    def on_validation_epoch_end(self):
+        """Log validation metrics."""
+        metrics = self.val_metrics.compute()
+        for name, value in metrics.items():
+            self.log(name, value, prog_bar=True)
+        self.val_metrics.reset()
 
-        # Steps calculation
-        max_steps = self.hparams.consistency_rampup_epochs * (
-            self.trainer.estimated_stepping_batches // self.trainer.max_epochs
-        )
+    def test_step(self, batch, batch_idx):
+        """Test step using teacher model."""
+        pred = self.teacher(batch)
+        mask = ~torch.isnan(batch.y)
+        loss = self._compute_loss(pred, batch.y, mask)
 
-        if self.global_step >= max_steps:
-            return self.hparams.max_consistency_weight
+        self.test_metrics["loss"].update(loss)
 
-        # Sigmoid ramp-up
-        phase = 1.0 - (self.global_step / max_steps)
-        return float(
-            self.hparams.max_consistency_weight
-            * torch.exp(torch.tensor(-5.0 * phase * phase))
-        )
+        pred_probs = torch.sigmoid(pred)
+        target_clean = torch.where(torch.isnan(batch.y), torch.zeros_like(batch.y), batch.y).long()
+
+        if mask.any():
+            self.test_metrics["roc_auc"].update(pred_probs, target_clean)
+            self.test_metrics["ap"].update(pred_probs, target_clean)
+
+        return loss
+
+    def on_test_epoch_end(self):
+        """Log test metrics."""
+        metrics = self.test_metrics.compute()
+        for name, value in metrics.items():
+            self.log(name, value)
+        self.test_metrics.reset()
 
     def configure_optimizers(self):
-        params = self.student.parameters()
-
-        if self.hparams.optimizer == "sgd":
-            optimizer = SGD(
-                params,
-                lr=self.hparams.learning_rate,
-                momentum=self.hparams.momentum,
-                nesterov=self.hparams.nesterov,
-                weight_decay=self.hparams.weight_decay,
+        """Configure optimizer and learning rate scheduler."""
+        if self.optimizer_name.lower() == "adam":
+            optimizer = torch.optim.Adam(
+                self.student.parameters(),
+                lr=self.learning_rate,
+                weight_decay=self.weight_decay,
+            )
+        elif self.optimizer_name.lower() == "adamw":
+            optimizer = torch.optim.AdamW(
+                self.student.parameters(),
+                lr=self.learning_rate,
+                weight_decay=self.weight_decay,
+            )
+        elif self.optimizer_name.lower() == "sgd":
+            optimizer = torch.optim.SGD(
+                self.student.parameters(),
+                lr=self.learning_rate,
+                momentum=self.momentum,
+                weight_decay=self.weight_decay,
+                nesterov=self.nesterov,
             )
         else:
-            optimizer = AdamW(
-                params,
-                lr=self.hparams.learning_rate,
-                weight_decay=self.hparams.weight_decay,
-                betas=(0.9, 0.999),
-            )
+            raise ValueError(f"Unknown optimizer: {self.optimizer_name}")
 
-        steps_per_epoch = (
-            self.trainer.estimated_stepping_batches // self.trainer.max_epochs
-        )
-        warmup_steps = int(self.hparams.warmup_epochs * steps_per_epoch)
-        total_steps = self.trainer.estimated_stepping_batches
+        def lr_lambda(epoch):
+            if epoch < self.warmup_epochs:
+                return (epoch + 1) / self.warmup_epochs
+            else:
+                progress = (epoch - self.warmup_epochs) / (
+                    self.trainer.max_epochs * self.cosine_period_ratio - self.warmup_epochs
+                )
+                return 0.5 * (1.0 + torch.cos(torch.tensor(progress * 3.14159)))
 
-        scheduler = SequentialLR(
-            optimizer,
-            schedulers=[
-                LinearLR(optimizer, start_factor=1e-3, total_iters=warmup_steps),
-                CosineAnnealingLR(optimizer, T_max=total_steps - warmup_steps),
-            ],
-            milestones=[warmup_steps],
-        )
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
-                "interval": "step",
+                "interval": "epoch",
                 "frequency": 1,
             },
         }
-
-    def _configure_metrics(self, prefix: str):
-        kwargs = {"num_tasks": self.num_outputs}
-        return MetricCollection(
-            {
-                f"{prefix}/roc_auc": MultitaskROC_AUC(**kwargs),
-                f"{prefix}/ap": MultitaskAveragePrecision(**kwargs),
-                f"{prefix}/pr_auc": MultitaskPR_AUC(**kwargs),
-                f"{prefix}/f1": MultitaskF1(**kwargs),
-            }
-        )
-
-    def load_weights(self, weights_path: str):
-        state_dict = torch.load(weights_path, map_location="cpu")
-        self.student.load_state_dict(state_dict)
-        log.info(f"Loaded weights from {weights_path}")
-
-  
-        
-
-    def on_validation_epoch_end(self):
-        self._log_metrics(self.val_metrics)
-
-    def on_test_epoch_end(self):
-        self._log_metrics(self.test_metrics)
-
-    def _log_metrics(self, metric_collection):
-        output = metric_collection.compute()
-        self.log_dict(output, on_step=False, on_epoch=True, sync_dist=True)
-        metric_collection.reset()
