@@ -48,9 +48,10 @@ Standard training using only labeled data.
 
 ```bash
 python -m src.trainers.baseline_trainer \
-    dataset=moleculenet \
-    dataset.init.name=tox21 \
-    model=ginev2
+    dataset.init.name=SIDER \
+    "dataset.init.splits=[0.67, 0.03, 0.1, 0.2]"\
+    dataset.init.batch_size_train=16 \
+    dataset.init.mu=5
 ```
 
 ### Train Semi-Supervised (Mean Teacher)
@@ -59,22 +60,10 @@ Training using both labeled and unlabeled data. Ideal for low-data regimes.
 
 ```bash
 python -m src.trainers.mean_teacher_trainer \
-    dataset=moleculenet \
-    dataset.init.name=sider \
-    model=ginev2 \
-    lightning_module=mean_teacher
-```
-
-### Run on PCBA (Large Scale)
-
-For the OGB-PCBA dataset, use the `ogbg` config.
-
-```bash
-python -m src.trainers.mean_teacher_trainer \
-    dataset=ogbg \
-    dataset.init.name=ogbg-molpcba \
-    dataset.init.batch_size_train=256 \
-    trainer.init.max_epochs=50
+    dataset.init.name=SIDER \
+    "dataset.init.splits=[0.35, 0.35, 0.1, 0.2]" \
+    dataset.init.batch_size_train=32 \
+    dataset.init.mu=1
 ```
 
 -----
